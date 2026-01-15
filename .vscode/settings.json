@@ -1,0 +1,18 @@
+{
+  "yaml.validate": true,
+  "yaml.schemas": {
+    "./schemas/detection.schema.json": [
+      "detections/**/*.yml",
+      "detections/**/*.yaml",
+      "templates/detection.template.yml",
+      "templates/*.yml",
+      "templates/*.yaml"
+    ],
+    "./schemas/model.schema.json": [
+      "models/**/*.yml",
+      "models/**/*.yaml",
+      "templates/model*.yml",
+      "templates/model*.yaml"
+    ]
+  }
+}
