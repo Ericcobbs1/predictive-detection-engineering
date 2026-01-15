@@ -1,0 +1,70 @@
+sources:
+  - source_id: sigmahq_sigma
+    name: SigmaHQ/sigma
+    type: detection_corpus
+    primary_language: sigma
+    ingestion: submodule_or_mirror
+    notes: "SIEM-agnostic detection rules"
+
+  - source_id: splunk_security_content
+    name: splunk/security_content
+    type: detection_corpus
+    primary_language: spl
+    ingestion: mirror_or_reference
+    notes: "Splunk detections, analytic stories, some ML"
+
+  - source_id: azure_sentinel
+    name: Azure/Azure-Sentinel
+    type: detection_corpus
+    primary_language: kql
+    ingestion: mirror_or_reference
+    notes: "Microsoft Sentinel analytic rules and hunting queries"
+
+  - source_id: elastic_detection_rules
+    name: elastic/detection-rules
+    type: detection_corpus
+    primary_language: eql
+    ingestion: mirror_or_reference
+    notes: "Elastic Security detection rules including EQL sequences"
+
+  - source_id: chronicle_detection_rules
+    name: chronicle/detection-rules
+    type: detection_corpus
+    primary_language: yaral
+    ingestion: mirror_or_reference
+    notes: "Google Chronicle detections in YARA-L"
+
+  - source_id: panther_analysis
+    name: panther-labs/panther-analysis
+    type: detection_corpus
+    primary_language: python
+    ingestion: mirror_or_reference
+    notes: "Code-first detections, strong for predictive-adjacent patterns"
+
+  - source_id: utmstack
+    name: utmstack/UTMStack
+    type: siem_platform
+    primary_language: other
+    ingestion: reference
+    notes: "Open-source SIEM implementation with embedded detections"
+
+  - source_id: awesome_threat_detection
+    name: 0x4D31/awesome-threat-detection
+    type: index
+    primary_language: other
+    ingestion: reference
+    notes: "Discovery list of detection resources"
+
+  - source_id: aws_security_arsenal
+    name: toniblyx/my-arsenal-of-aws-security-tools
+    type: index
+    primary_language: other
+    ingestion: reference
+    notes: "AWS-focused security tools and detection references"
+
+  - source_id: crowdstrike_org
+    name: crowdstrike (GitHub org)
+    type: telemetry_reference
+    primary_language: other
+    ingestion: reference
+    notes: "Telemetry schemas/APIs; not a public detection-rule corpus"

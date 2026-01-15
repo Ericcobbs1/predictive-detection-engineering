@@ -1,0 +1,22 @@
+detection_inventory_columns:
+  - detection_id
+  - source_id
+  - source_rule_path
+  - name
+  - description
+  - query_language
+  - detection_type
+  - predictive_readiness
+  - severity
+  - status
+  - platform
+  - product
+  - category
+  - data_sources
+  - tactics
+  - techniques
+  - tags
+  - time_window
+  - references
+  - false_positives
+  - notes
