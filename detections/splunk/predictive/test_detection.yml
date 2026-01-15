@@ -1,0 +1,40 @@
+id: ""
+name: ""
+version: "0.1.0"
+status: "draft"  # draft | experimental | production
+owner: ""
+description: ""
+
+detection_type: "reactive"  # reactive | predictive_adjacent | predictive
+predictive_readiness: "reactive_only"  # reactive_only | predictive_adjacent | predictive_ready
+
+severity: "medium"  # informational | low | medium | high | critical
+
+log_source:
+  platform: ""   # e.g., windows, linux, aws, azure, gcp, saas
+  product: ""    # e.g., security, cloudtrail, m365, okta
+  category: ""   # e.g., process_creation, authentication, network
+
+data_sources: []
+
+query:
+  language: ""   # sigma | spl | kql | eql | yaral | lucene | python
+  text: ""
+
+features: []
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: ""
+
+false_positives: []
+triage:
+  steps: []
+tuning:
+  knobs: []
+
+references: []
+tags: []
+
