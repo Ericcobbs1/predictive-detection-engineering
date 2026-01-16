@@ -1,0 +1,126 @@
+id: "PDE-SPL-0203"
+name: "Account compromise risk trajectory (score acceleration)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Computes a rolling risk score from leading indicators and alerts on high risk or accelerating risk (trajectory)."
+
+detection_type: "predictive"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authentication"
+
+data_sources:
+  - "Windows Security 4625 (Failed Logon)"
+  - "Windows Security 4624 (Successful Logon) optional"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security (EventCode=4625 OR EventCode=4624)) OR (sourcetype=XmlWinEventLog:Security (EventCode=4625 OR EventCode=4624))
+    | eval user=coalesce(user, TargetUserName),
+           src_ip=coalesce(src_ip, IpAddress, Source_Network_Address)
+    | eval failure=if(EventCode=4625,1,0), success=if(EventCode=4624,1,0)
+    | bin _time span=10m
+    | stats sum(failure) as failures sum(success) as successes dc(src_ip) as distinct_src by _time user
+    | eval risk = (failures*1) + (distinct_src*5) + (if(successes>0 AND failures>=10,20,0))
+    | sort 0 user _time
+    | streamstats window=6 sum(risk) as risk_1h by user
+    | streamstats window=6 first(risk_1h) as risk_1h_prev by user
+    | eval risk_delta=risk_1h - risk_1h_prev
+    | where risk_1h >= 60 OR risk_delta >= 30
+    | stats latest(_time) as last_seen max(risk_1h) as risk_1h max(risk_delta) as risk_delta by user
+
+features:
+  - name: "failures"
+    description: "Failed logons per 10-minute bucket."
+    field: "EventCode=4625"
+    aggregation: "sum by 10m"
+    window: "10m"
+  - name: "distinct_src"
+    description: "Distinct source IPs per 10-minute bucket."
+    field: "src_ip"
+    aggregation: "dc by 10m"
+    window: "10m"
+  - name: "success_after_failures"
+    description: "Adds risk when success occurs after significant failures (progression)."
+    field: "EventCode=4624 + EventCode=4625"
+    aggregation: "derived"
+    window: "1h"
+
+prediction:
+  target: "account compromise likelihood (risk score)"
+  horizon: "next 60 minutes"
+  method: "risk scoring + acceleration (delta) over rolling windows"
+
+alert_condition: "Alert when risk_1h exceeds threshold or risk accelerates rapidly (risk_delta)."
+
+false_positives:
+  - "Password reset events causing clustered failures then success."
+  - "Shared accounts generating diverse source IPs (not recommended)."
+
+triage:
+  steps:
+    - "Review user’s auth pattern in the last 1–2 hours and identify top source IPs."
+    - "Check for a success event after failures and investigate immediate post-auth activity."
+    - "Validate MFA signals or conditional access outcomes if available."
+
+tuning:
+  knobs:
+    - "Adjust weights: distinct_src multiplier and success-after-fail bonus."
+    - "Adjust thresholds (risk_1h, risk_delta) based on environment baseline."
+    - "Exclude known service/shared accounts or handle them with separate thresholds."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Credential Access"
+      - "Defense Evasion"
+      - "Initial Access"
+    techniques:
+      - "T1110"
+      - "T1078"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+        - "Respond"
+      categories:
+        - "DE.CM"
+        - "RS.AN"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+        - "AC"
+      controls:
+        - "SI-4"
+        - "AU-6"
+        - "AC-7"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1110/"
+  - "https://attack.mitre.org/techniques/T1078/"
+
+tags:
+  - "domain:identity"
+  - "attack.t1110"
+  - "attack.t1078"
+  - "pattern:risk_scoring"
+  - "pattern:trajectory"

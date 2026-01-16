@@ -1,0 +1,134 @@
+id: "PDE-SPL-0301"
+name: "Potential system DLL sideloading from non-system locations (baseline rarity)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects rare DLL loads by system processes where the DLL is loaded from non-system Windows paths. Converted from Sigma rule 4fc0deee-0057-4998-ab31-d24e46e0aba4."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "sysmon"
+  category: "image_load"
+
+data_sources:
+  - "Sysmon Event ID 7 (Image loaded)"
+  - "Sysmon Event ID 1 (Process Create) optional enrichment"
+
+query:
+  language: "spl"
+  text: |
+    sourcetype=Sysmon:Operational EventCode=7
+    | eval host=coalesce(host, Computer),
+           process=lower(coalesce(Image, ProcessImage, process_path)),
+           dll_path=lower(coalesce(ImageLoaded, ImageLoadedPath, ModuleLoaded, file_path))
+    | where like(dll_path, "%.dll")
+    | where isnotnull(process) AND isnotnull(dll_path)
+    | where match(process, "\\\\windows\\\\(system32|syswow64)\\\\")=1
+    | where match(dll_path, "\\\\windows\\\\(system32|syswow64|winsxs)\\\\")=0
+    | where match(dll_path, "\\\\program files\\\\")=0
+    | bin _time span=1h
+    | stats count as dll_loads by host process dll_path _time
+    | sort 0 host process dll_path _time
+    | streamstats window=336 sum(dll_loads) as loads_14d by host process dll_path
+    | where loads_14d <= 2
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            sum(dll_loads) as recent_loads
+            max(loads_14d) as baseline_loads_14d
+            by host process dll_path
+    | eval risk_score=case(
+        baseline_loads_14d=0, 80,
+        baseline_loads_14d=1, 60,
+        baseline_loads_14d=2, 40,
+        true(), 20
+      )
+    | where risk_score >= 40
+    | sort - risk_score
+
+features:
+  - name: "baseline_loads_14d"
+    description: "Rolling 14-day baseline of DLL load frequency for (host, process, dll_path) using 1-hour buckets."
+    field: "dll_path"
+    aggregation: "rolling sum"
+    window: "14d"
+  - name: "recent_loads"
+    description: "Recent DLL load counts for the alerting window."
+    field: "dll_path"
+    aggregation: "sum"
+    window: "search time range"
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Alert when a system process loads a DLL from a non-system path and the (host, process, dll_path) baseline frequency over 14 days is rare (<=2), yielding risk_score>=40."
+
+false_positives:
+  - "Legitimate software updates or plugins that load DLLs from non-standard directories."
+  - "Custom enterprise applications installed outside Program Files that legitimately interact with system processes."
+  - "Golden image changes or new endpoint management tooling introducing new DLL paths."
+
+triage:
+  steps:
+    - "Confirm the DLL path is user-writable (e.g., Users\\Public, AppData, Temp) or otherwise unexpected."
+    - "Check the signing status and hash reputation of the DLL if available."
+    - "Identify the parent/launch context of the system process (if Sysmon Event ID 1 is available)."
+    - "Correlate with new service/task creation, registry persistence, and outbound network activity near first_seen."
+    - "If suspected sideloading, collect the DLL and the associated executable and perform static/dynamic analysis."
+
+tuning:
+  knobs:
+    - "Adjust baseline window size (7d, 14d, 30d) by modifying streamstats window (168, 336, 720)."
+    - "Add allowlist for known legitimate non-standard DLL directories in your environment."
+    - "Scope to specific high-risk system processes (e.g., rundll32.exe, svchost.exe) if noise is high."
+    - "Change the filter that excludes Program Files if your environment legitimately loads from custom app folders."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Defense Evasion"
+      - "Persistence"
+      - "Privilege Escalation"
+    techniques:
+      - "T1574.002"
+  cyber_kill_chain:
+    phases:
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "Sigma: 4fc0deee-0057-4998-ab31-d24e46e0aba4 (Potential System DLL Sideloading From Non System Locations)"
+  - "https://attack.mitre.org/techniques/T1574/002/"
+  - "https://learn.microsoft.com/sysinternals/downloads/sysmon"
+
+tags:
+  - "domain:endpoint"
+  - "pattern:rarity"
+  - "pattern:baseline"
+  - "technique:dll-sideloading"
+  - "attack.t1574.002"

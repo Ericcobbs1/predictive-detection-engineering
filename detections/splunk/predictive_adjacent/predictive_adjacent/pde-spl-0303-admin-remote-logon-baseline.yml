@@ -1,0 +1,158 @@
+id: "PDE-SPL-0303"
+name: "Admin user remote logon from novel source (baseline rarity)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects remote logons by privileged/admin users from novel source IPs or novel destination hosts using a rolling baseline. Inspired by Sigma 'Admin User Remote Logon'."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authentication"
+
+data_sources:
+  - "Windows Security 4624 (Successful Logon)"
+  - "Windows Security 4672 (Special privileges assigned to new logon) optional"
+  - "Group membership sources (optional enrichment) to identify admin users"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security EventCode=4624) OR (sourcetype=XmlWinEventLog:Security EventCode=4624)
+    | eval user=coalesce(user, TargetUserName),
+           dest_host=coalesce(host, Computer),
+           src_ip=coalesce(src_ip, IpAddress, Source_Network_Address),
+           logon_type=coalesce(LogonType, Logon_Type)
+    | where isnotnull(user) AND isnotnull(dest_host)
+    | eval logon_type=tostring(logon_type)
+    | eval is_remote=if(logon_type IN ("3","10"), 1, 0)  /* 3=Network, 10=RemoteInteractive */
+    | where is_remote=1
+    | eval user_l=lower(user)
+
+    /* ---- Admin scope (edit this list to match your environment) ---- */
+    | eval is_admin=if(match(user_l, "(^admin)|(^adm_)|(administrator)|(domain admin)|(enterprise admin)"), 1, 0)
+    | where is_admin=1
+
+    /* ---- Baseline novelty: user->src_ip and user->dest_host ---- */
+    | bin _time span=1h
+    | stats count as successes dc(src_ip) as distinct_src values(src_ip) as src_ips by _time user dest_host
+    | sort 0 user dest_host _time
+    | streamstats window=720 sum(successes) as user_dest_30d by user dest_host
+    | streamstats window=720 sum(distinct_src) as user_dest_src_30d by user dest_host
+
+    /* Mark novelty based on low historical frequency */
+    | eval novel_dest=if(user_dest_30d<=1,1,0)
+    | eval novel_src=if(user_dest_src_30d<=1,1,0)
+
+    /* Risk scoring */
+    | eval risk_score = (novel_dest*50) + (novel_src*40) + (if(distinct_src>=3,20,0))
+    | where risk_score >= 70
+
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            max(risk_score) as risk_score
+            sum(successes) as recent_successes
+            max(user_dest_30d) as baseline_user_dest_30d
+            max(user_dest_src_30d) as baseline_user_dest_src_30d
+            values(src_ips) as src_ips
+            by user dest_host novel_dest novel_src
+    | sort - risk_score
+
+features:
+  - name: "novel_dest"
+    description: "Whether destination host is rare for the user over a rolling 30-day baseline."
+    field: "dest_host"
+    aggregation: "derived flag"
+    window: "30d"
+  - name: "novel_src"
+    description: "Whether source IP diversity is rare for the user-destination pair over a rolling 30-day baseline."
+    field: "src_ip"
+    aggregation: "derived flag"
+    window: "30d"
+  - name: "distinct_src"
+    description: "Distinct source IPs for the user to destination host in a 1-hour bucket."
+    field: "src_ip"
+    aggregation: "dc by 1h"
+    window: "1h"
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Alert when an admin user performs a remote logon (type 3 or 10) and the user->destination and/or user->source patterns are novel compared to a 30-day rolling baseline, producing risk_score >= 70."
+
+false_positives:
+  - "Legitimate admin responding to incidents from new jump boxes or networks."
+  - "New admin onboarding or role changes."
+  - "Infrastructure changes (new servers, new VPN ranges) impacting source IP baselines."
+
+triage:
+  steps:
+    - "Verify whether the admin logon aligns with a change ticket or incident response activity."
+    - "Check src_ip reputation and geo context (if available) and whether it is a known VPN/jump host."
+    - "Review what the admin did after logging on (new services/tasks, PowerShell, group changes)."
+    - "Look for prior auth anomalies for the same account (4625 spikes, MFA prompts, unusual device)."
+    - "If suspicious, reset credentials, review privileged sessions, and check for lateral movement."
+
+tuning:
+  knobs:
+    - "Replace the is_admin heuristic with authoritative group membership if available (recommended)."
+    - "Adjust baseline window (30d=720 1h buckets). Use 14d=336 if needed."
+    - "Adjust risk_score threshold (>=70) based on environment noise."
+    - "Exclude known jump hosts/VPN ranges by allowlisting src_ip CIDRs."
+    - "Scope to Tier-0 admins only to increase fidelity."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Lateral Movement"
+      - "Credential Access"
+    techniques:
+      - "T1021"
+      - "T1078"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "AC"
+        - "AU"
+        - "SI"
+      controls:
+        - "AC-2"
+        - "AU-6"
+        - "SI-4"
+  pci_dss:
+    requirements:
+      - "7.2"
+      - "10.2"
+      - "10.6"
+
+references:
+  - "Sigma (inspiration): Admin User Remote Logon"
+  - "https://attack.mitre.org/techniques/T1021/"
+  - "https://attack.mitre.org/techniques/T1078/"
+  - "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-4624"
+
+tags:
+  - "domain:identity"
+  - "pattern:baseline"
+  - "pattern:novelty"
+  - "attack.t1078"
+

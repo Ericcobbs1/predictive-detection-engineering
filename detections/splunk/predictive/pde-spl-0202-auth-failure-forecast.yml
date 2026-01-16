@@ -1,0 +1,104 @@
+id: "PDE-SPL-0202"
+name: "Forecast authentication failure surge (early brute force warning)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Forecasts short-term authentication failures and alerts if the forecast exceeds a defined threshold within the horizon."
+
+detection_type: "predictive"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authentication"
+
+data_sources:
+  - "Windows Security 4625 (Failed Logon)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security EventCode=4625) OR (sourcetype=XmlWinEventLog:Security EventCode=4625)
+    | timechart span=5m count as failures
+    | fillnull value=0 failures
+    | predict failures as forecast_failures future_timespan=12 holdback=0 algorithm=LLP
+    | eval threshold=200
+    | where forecast_failures > threshold
+    | stats earliest(_time) as first_exceed_time
+            min(forecast_failures) as min_forecast
+            max(forecast_failures) as max_forecast
+            values(threshold) as threshold
+
+features:
+  - name: "failures"
+    description: "Count of failed logons per 5-minute bucket."
+    field: "EventCode=4625"
+    aggregation: "count by 5m"
+    window: "5m"
+
+prediction:
+  target: "failed logons per 5 minutes"
+  horizon: "next 60 minutes"
+  method: "time-series forecasting using Splunk predict (LLP)"
+
+alert_condition: "Alert if forecast_failures exceeds threshold at any point within the horizon."
+
+false_positives:
+  - "Password spray tests by internal security teams."
+  - "Authentication outage or misconfiguration causing elevated failures."
+
+triage:
+  steps:
+    - "Identify top targeted users and source IPs in the last 30–60 minutes."
+    - "Look for signs of password spraying (many users, few attempts per user) or brute force (many attempts per user)."
+    - "Check for subsequent 4624 successes for targeted users and investigate any immediate post-auth activity."
+
+tuning:
+  knobs:
+    - "Tune threshold and span (5m vs 10m) based on baseline volume."
+    - "Filter to internet-facing auth sources if internal auth noise is high."
+    - "Create per-user or per-src_ip forecasts for high-value accounts or key gateways."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Credential Access"
+    techniques:
+      - "T1110"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+        - "AC"
+      controls:
+        - "SI-4"
+        - "AU-6"
+        - "AC-7"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1110/"
+  - "https://docs.splunk.com/Documentation/Splunk/latest/SearchReference/Predict"
+
+tags:
+  - "domain:identity"
+  - "attack.t1110"
+  - "pattern:forecast"
