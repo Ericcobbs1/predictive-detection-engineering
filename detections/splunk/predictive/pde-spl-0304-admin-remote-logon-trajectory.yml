@@ -1,0 +1,185 @@
+id: "PDE-SPL-0304"
+name: "Admin remote logon risk trajectory (novelty + acceleration)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Predictive detection that computes an hourly rolling risk trajectory for admin remote logons using novelty (new dest/src) plus acceleration. Builds on the logic of PDE-SPL-0303."
+
+detection_type: "predictive"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authentication"
+
+data_sources:
+  - "Windows Security 4624 (Successful Logon)"
+  - "Windows Security 4672 optional"
+  - "Authoritative admin group membership (recommended; optional)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security EventCode=4624) OR (sourcetype=XmlWinEventLog:Security EventCode=4624)
+    | eval user=coalesce(user, TargetUserName),
+           dest_host=coalesce(host, Computer),
+           src_ip=coalesce(src_ip, IpAddress, Source_Network_Address),
+           logon_type=coalesce(LogonType, Logon_Type)
+    | where isnotnull(user) AND isnotnull(dest_host)
+    | eval logon_type=tostring(logon_type)
+    | eval is_remote=if(logon_type IN ("3","10"), 1, 0)
+    | where is_remote=1
+    | eval user_l=lower(user)
+
+    /* ---- Admin scope (replace with authoritative membership where possible) ---- */
+    | eval is_admin=if(match(user_l, "(^admin)|(^adm_)|(administrator)|(domain admin)|(enterprise admin)"), 1, 0)
+    | where is_admin=1
+
+    /* ---- Hourly buckets ---- */
+    | bin _time span=1h
+    | stats count as remote_successes dc(src_ip) as distinct_src values(src_ip) as src_ips values(dest_host) as dest_hosts by _time user
+
+    /* ---- Baseline: compare current hour to prior 30 days (720h) for the same user ---- */
+    | sort 0 user _time
+    | streamstats window=720 avg(remote_successes) as avg_30d stdev(remote_successes) as sd_30d by user
+    | eval z = if(sd_30d>0, (remote_successes-avg_30d)/sd_30d, 0)
+
+    /* ---- Novelty approximation: new source/destination diversity spikes ---- */
+    | streamstats window=720 avg(distinct_src) as avg_src_30d stdev(distinct_src) as sd_src_30d by user
+    | eval z_src = if(sd_src_30d>0, (distinct_src-avg_src_30d)/sd_src_30d, 0)
+
+    /* ---- Risk score (explainable) ---- */
+    | eval base_risk = (remote_successes*5) + (distinct_src*15) + (if(z>=3,25,0)) + (if(z_src>=3,25,0))
+    | eval risk = case(
+        z>=4 OR z_src>=4, base_risk+30,
+        z>=3 OR z_src>=3, base_risk+15,
+        true(), base_risk
+      )
+
+    /* ---- Trajectory: rolling 6-hour risk + acceleration ---- */
+    | streamstats window=6 sum(risk) as risk_6h by user
+    | streamstats window=6 first(risk_6h) as risk_6h_prev by user
+    | eval risk_delta = risk_6h - risk_6h_prev
+
+    /* ---- Alert conditions ---- */
+    | where risk_6h >= 200 OR risk_delta >= 80 OR (risk_6h >= 120 AND (z>=4 OR z_src>=4))
+    | stats latest(_time) as last_seen
+            max(risk_6h) as risk_6h
+            max(risk_delta) as risk_delta
+            max(z) as z_logons
+            max(z_src) as z_src_diversity
+            values(src_ips) as src_ips
+            values(dest_hosts) as dest_hosts
+            by user
+    | sort - risk_6h
+
+features:
+  - name: "remote_successes"
+    description: "Count of successful remote admin logons per 1-hour bucket (LogonType 3 or 10)."
+    field: "EventCode=4624 + LogonType"
+    aggregation: "count by 1h"
+    window: "1h"
+  - name: "distinct_src"
+    description: "Distinct source IPs per hour for the admin user."
+    field: "src_ip"
+    aggregation: "dc by 1h"
+    window: "1h"
+  - name: "z_logons"
+    description: "Z-score of hourly remote admin logons compared to a 30-day rolling baseline."
+    field: "remote_successes"
+    aggregation: "z-score"
+    window: "30d rolling"
+  - name: "risk_6h"
+    description: "Rolling 6-hour risk accumulation for the user."
+    field: "risk"
+    aggregation: "rolling sum"
+    window: "6h"
+  - name: "risk_delta"
+    description: "Risk acceleration computed as change in rolling risk window."
+    field: "risk_6h"
+    aggregation: "delta"
+    window: "6h"
+
+prediction:
+  target: "admin remote logon compromise likelihood (risk trajectory)"
+  horizon: "next 6 hours"
+  method: "risk scoring + baseline deviation (z-score) + acceleration (delta)"
+
+alert_condition: "Alert when rolling risk_6h is high, risk accelerates rapidly, or extreme baseline deviation occurs with elevated risk."
+
+false_positives:
+  - "Planned incident response activity from new networks or jump hosts."
+  - "New admin onboarding or role changes."
+  - "Infrastructure changes impacting source IP baselines (VPN changes, new VDI pools)."
+
+triage:
+  steps:
+    - "Confirm whether the admin activity aligns with an approved change/IR event."
+    - "Review src_ips and dest_hosts for novelty (new networks, unusual servers)."
+    - "Check for concurrent suspicious endpoint activity on affected dest_hosts (services/tasks, PowerShell, binary path anomalies)."
+    - "Review prior authentication anomalies for the same user (4625 spikes, MFA alerts, impossible travel if available)."
+    - "If suspicious, contain the account: reset credentials, revoke sessions, and review privileged actions."
+
+tuning:
+  knobs:
+    - "Replace the admin heuristic with authoritative group membership or a lookup of privileged users."
+    - "Adjust baseline window (720 hours = 30d). Use 336 hours (14d) if needed."
+    - "Tune thresholds: risk_6h (default 200) and risk_delta (default 80) based on baseline."
+    - "Exclude known jump host IP ranges and admin bastion destinations."
+    - "Split Tier-0 admins into a dedicated version with lower thresholds."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Lateral Movement"
+      - "Credential Access"
+      - "Defense Evasion"
+    techniques:
+      - "T1021"
+      - "T1078"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+        - "Respond"
+      categories:
+        - "DE.CM"
+        - "RS.AN"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "AC"
+        - "AU"
+        - "SI"
+      controls:
+        - "AC-2"
+        - "AU-6"
+        - "SI-4"
+  pci_dss:
+    requirements:
+      - "7.2"
+      - "10.2"
+      - "10.6"
+
+references:
+  - "Builds on PDE-SPL-0303 (admin remote logon baseline novelty)"
+  - "https://attack.mitre.org/techniques/T1021/"
+  - "https://attack.mitre.org/techniques/T1078/"
+  - "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-4624"
+
+tags:
+  - "domain:identity"
+  - "pattern:risk_scoring"
+  - "pattern:trajectory"
+  - "pattern:baseline"
+  - "attack.t1078"
+
