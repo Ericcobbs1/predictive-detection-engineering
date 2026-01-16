@@ -1,0 +1,10 @@
+source_id: sigmahq_sigma
+generated_at: ""
+selection_criteria:
+  include_labels:
+    - predictive_ready
+    - predictive_adjacent
+  min_score: 8
+  notes: "Curated shortlist for Splunk-first conversions (predictive engineering roadmap)."
+
+candidates: []
