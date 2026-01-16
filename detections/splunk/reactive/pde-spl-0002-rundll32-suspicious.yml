@@ -1,0 +1,100 @@
+id: "PDE-SPL-0002"
+name: "Suspicious rundll32 execution patterns"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects common suspicious rundll32 patterns such as URL/UNC usage and execution from user-writable paths."
+
+detection_type: "reactive"
+predictive_readiness: "reactive_only"
+
+severity: "medium"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "process_creation"
+
+data_sources:
+  - "Sysmon Event ID 1 (Process Create)"
+  - "Windows Security 4688 (Process Creation)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=Sysmon:Operational EventCode=1) OR (sourcetype=WinEventLog:Security EventCode=4688)
+    | eval Image=coalesce(Image, New_Process_Name),
+           CommandLine=coalesce(CommandLine, Process_Command_Line),
+           ParentImage=coalesce(ParentImage, Creator_Process_Name)
+    | search Image="*\\rundll32.exe"
+    | where match(lower(CommandLine), "http://|https://|\\\\\\\\|\\\\users\\\\public\\\\|\\\\appdata\\\\|\\\\temp\\\\")=1
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            values(ParentImage) as parent_images
+            values(CommandLine) as command_lines
+            count as event_count
+            by host user Image
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when rundll32 command line includes network indicators or user-writable execution context."
+
+false_positives:
+  - "Rare legitimate software that uses rundll32 with unusual parameters."
+
+triage:
+  steps:
+    - "Inspect the rundll32 command line for remote resource loading (URL/UNC) and DLL/function arguments."
+    - "Review the parent process chain and user context."
+    - "Validate referenced DLL path, signature, and reputation; check file hashes if available."
+    - "Correlate with follow-on behaviors (persistence, suspicious outbound traffic, credential access)."
+
+tuning:
+  knobs:
+    - "Allowlist known legitimate rundll32 command lines and parent processes."
+    - "Require both user-writable path AND network indicator for higher fidelity."
+    - "Scope to non-admin users if admin automation causes noise."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Defense Evasion"
+      - "Execution"
+    techniques:
+      - "T1218.011"
+  cyber_kill_chain:
+    phases:
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1218/011/"
+
+tags:
+  - "domain:endpoint"
+  - "lolbin:rundll32"
+  - "attack.t1218.011"

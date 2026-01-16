@@ -1,0 +1,100 @@
+id: "PDE-SPL-0003"
+name: "Windows service creation detected"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects creation of a new Windows service (EventCode 7045). Services are commonly abused for persistence or remote execution."
+
+detection_type: "reactive"
+predictive_readiness: "predictive_adjacent"
+
+severity: "medium"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "service_creation"
+
+data_sources:
+  - "Windows System 7045 (Service installed)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:System EventCode=7045) OR (sourcetype=XmlWinEventLog:System EventCode=7045)
+    | eval ServiceName=coalesce(ServiceName, param1),
+           ImagePath=coalesce(ImagePath, param2),
+           AccountName=coalesce(AccountName, user)
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            values(ImagePath) as image_paths
+            count as event_count
+            by host AccountName ServiceName
+    | where event_count >= 1
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger on any new service creation event."
+
+false_positives:
+  - "Legitimate software installs and updates."
+  - "Authorized admin activity during maintenance windows."
+
+triage:
+  steps:
+    - "Confirm whether the service creation matches an approved change or installation window."
+    - "Review ImagePath for user-writable locations and suspicious binaries."
+    - "Validate service name and account context; identify whether it is a known installer."
+    - "Check for follow-on indicators (new scheduled tasks, registry run keys, suspicious outbound)."
+
+tuning:
+  knobs:
+    - "Allowlist known installers and management tooling."
+    - "Require ImagePath in user-writable paths for higher fidelity."
+    - "Alert only when ServiceName is new/rare on the host (future enhancement)."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Persistence"
+      - "Privilege Escalation"
+    techniques:
+      - "T1543.003"
+  cyber_kill_chain:
+    phases:
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "CM"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "CM-7"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1543/003/"
+
+tags:
+  - "domain:endpoint"
+  - "persistence:service"
+  - "attack.t1543.003"

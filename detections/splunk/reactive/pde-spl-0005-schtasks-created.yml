@@ -1,0 +1,105 @@
+id: "PDE-SPL-0005"
+name: "Scheduled task creation detected (potential persistence)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects scheduled task creation (Security 4698) or schtasks.exe execution. Scheduled tasks are commonly used for persistence."
+
+detection_type: "reactive"
+predictive_readiness: "reactive_only"
+
+severity: "medium"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "scheduled_task"
+
+data_sources:
+  - "Windows Security 4698 (Task Created)"
+  - "Sysmon Event ID 1 (schtasks.exe execution)"
+
+query:
+  language: "spl"
+  text: |
+    ((sourcetype=WinEventLog:Security EventCode=4698) OR (sourcetype=XmlWinEventLog:Security EventCode=4698))
+    OR ((sourcetype=Sysmon:Operational EventCode=1) AND (Image="*\\schtasks.exe"))
+    | eval user=coalesce(user, SubjectUserName),
+           TaskName=coalesce(TaskName, Task_Name),
+           CommandLine=coalesce(CommandLine, Process_Command_Line),
+           Image=coalesce(Image, New_Process_Name)
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            values(TaskName) as tasks
+            values(CommandLine) as command_lines
+            values(Image) as images
+            count as event_count
+            by host user
+    | where event_count >= 1
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger on any task creation or schtasks execution event meeting the search criteria."
+
+false_positives:
+  - "Legitimate IT automation and endpoint management tooling."
+  - "Software updaters that create scheduled tasks."
+
+triage:
+  steps:
+    - "Review task name, trigger details, and action command (executable/script path)."
+    - "Validate whether task runs from user-writable directories."
+    - "Check task creator account legitimacy and change control."
+    - "Correlate with process execution and network activity at creation time."
+
+tuning:
+  knobs:
+    - "Allowlist known management tooling and task naming conventions."
+    - "Require suspicious execution path (AppData/Temp/Public) for higher fidelity."
+    - "Scope to non-admin users if admin tooling is noisy."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Persistence"
+      - "Execution"
+    techniques:
+      - "T1053.005"
+  cyber_kill_chain:
+    phases:
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+        - "CM"
+      controls:
+        - "SI-4"
+        - "AU-6"
+        - "CM-7"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1053/005/"
+
+tags:
+  - "domain:endpoint"
+  - "persistence:scheduled_task"
+  - "attack.t1053.005"

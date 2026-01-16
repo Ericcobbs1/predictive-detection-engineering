@@ -1,0 +1,103 @@
+id: "PDE-SPL-0004"
+name: "Multiple failed logons for a user in a short window"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects repeated failed logons for a user within a short time window. Useful as a baseline for brute force or password spraying."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_adjacent"
+
+severity: "medium"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authentication"
+
+data_sources:
+  - "Windows Security 4625 (Failed Logon)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security EventCode=4625) OR (sourcetype=XmlWinEventLog:Security EventCode=4625)
+    | eval user=coalesce(user, Account_Name, TargetUserName),
+           src_ip=coalesce(src_ip, IpAddress, Source_Network_Address)
+    | bin _time span=5m
+    | stats count as failures dc(src_ip) as distinct_src values(src_ip) as src_list by _time user host
+    | where failures >= 10
+    | stats sum(failures) as failures
+            max(distinct_src) as distinct_src
+            values(src_list) as src_list
+            earliest(_time) as window_start
+            latest(_time) as window_end
+            by user host
+    | eval window_minutes=round((window_end-window_start)/60,2)
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when failures >= 10 in a 5-minute bucket for the same user/host."
+
+false_positives:
+  - "Users mistyping passwords."
+  - "Service accounts with stale credentials."
+  - "Identity provider or domain controller issues causing widespread failures."
+
+triage:
+  steps:
+    - "Identify whether failures are concentrated from one src_ip or distributed across many."
+    - "Check for subsequent 4624 success events for the same user."
+    - "Review account type (human vs service) and whether lockouts occurred."
+    - "Correlate with geolocation and device posture if available."
+
+tuning:
+  knobs:
+    - "Adjust threshold (failures) and window size (5m/10m) based on baseline."
+    - "Exclude known scanners, VPN concentrators, or authentication relays if noisy."
+    - "Add distinct_src minimum for higher confidence in password spraying."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Credential Access"
+    techniques:
+      - "T1110"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+        - "AC"
+      controls:
+        - "SI-4"
+        - "AU-6"
+        - "AC-7"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1110/"
+
+tags:
+  - "domain:identity"
+  - "attack.t1110"
+  - "pattern:bruteforce"
