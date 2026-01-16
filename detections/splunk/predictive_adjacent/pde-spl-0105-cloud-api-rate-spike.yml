@@ -1,0 +1,96 @@
+id: "PDE-SPL-0105"
+name: "Cloud API call rate spike by principal (leading indicator of abuse)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects spikes in cloud API calls by principal in short windows using rolling baseline z-score and absolute threshold."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_adjacent"
+
+severity: "medium"
+
+log_source:
+  platform: "aws"
+  product: "cloudtrail"
+  category: "api_activity"
+
+data_sources:
+  - "AWS CloudTrail"
+
+query:
+  language: "spl"
+  text: |
+    sourcetype=aws:cloudtrail
+    | eval principal=coalesce('userIdentity.arn','userIdentity.userName',user)
+    | bin _time span=5m
+    | stats count as api_calls dc(eventName) as distinct_apis values(eventSource) as sources by _time principal
+    | sort 0 principal _time
+    | streamstats window=288 avg(api_calls) as avg_24h stdev(api_calls) as sd_24h by principal
+    | eval z=if(sd_24h>0,(api_calls-avg_24h)/sd_24h,0)
+    | where api_calls >= 500 OR z >= 4
+    | stats earliest(_time) as first_seen latest(_time) as last_seen max(api_calls) as peak max(z) as max_z values(distinct_apis) as distinct_apis by principal
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when API call volume spikes beyond threshold or z-score anomaly (z>=4)."
+
+false_positives:
+  - "Legitimate CI/CD, Terraform, backups, or inventory jobs."
+  - "Bulk audit or incident response collection."
+
+triage:
+  steps:
+    - "Validate the principal (user vs role) and expected automation behavior."
+    - "Review top eventName values during spike, focusing on IAM, STS, KMS, and security group changes."
+    - "Check source IPs, user agents, and geo context if available."
+
+tuning:
+  knobs:
+    - "Exclude known automation roles and service principals."
+    - "Increase thresholds for high-volume service roles."
+    - "Create a sensitive-API variant focusing only on IAM/KMS/STS."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Discovery"
+      - "Privilege Escalation"
+    techniques:
+      - "T1087"
+  cyber_kill_chain:
+    phases:
+      - "Reconnaissance"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "AU"
+        - "SI"
+      controls:
+        - "AU-6"
+        - "SI-4"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1087/"
+
+tags:
+  - "domain:cloud"
+  - "platform:aws"
+  - "pattern:rate_spike"

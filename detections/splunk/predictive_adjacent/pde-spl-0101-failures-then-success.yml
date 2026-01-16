@@ -1,0 +1,98 @@
+id: "PDE-SPL-0101"
+name: "Authentication failures followed by a success (possible brute force progression)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects multiple authentication failures followed by a success for the same user within 30 minutes (progression signal)."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authentication"
+
+data_sources:
+  - "Windows Security 4625 (Failed Logon)"
+  - "Windows Security 4624 (Successful Logon)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security (EventCode=4625 OR EventCode=4624)) OR (sourcetype=XmlWinEventLog:Security (EventCode=4625 OR EventCode=4624))
+    | eval user=coalesce(user, TargetUserName), src_ip=coalesce(src_ip, IpAddress, Source_Network_Address)
+    | eval outcome=if(EventCode=4624,"success","failure")
+    | sort 0 user _time
+    | streamstats window=200 count(eval(outcome="failure")) as failures_so_far by user
+    | where outcome="success" AND failures_so_far >= 10
+    | eval lookback_start=_time-1800
+    | stats earliest(_time) as success_time values(src_ip) as src_ips values(host) as hosts max(failures_so_far) as failures_prior by user
+    | where failures_prior >= 10
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when a success occurs after >=10 failures for the same user within ~30 minutes."
+
+false_positives:
+  - "User mistyped password repeatedly then succeeded."
+  - "Service account password changes or sync delays."
+
+triage:
+  steps:
+    - "Confirm whether failures and success originate from the same src_ip or different src_ips."
+    - "Check for additional suspicious sign-in context (new device, geo anomaly, unusual logon type)."
+    - "Review post-success activity: privilege changes, lateral movement, mailbox rules, remote access, etc."
+
+tuning:
+  knobs:
+    - "Adjust failures threshold (5–20) and time window (10–60 minutes)."
+    - "Require distinct source IPs (password spraying) for higher fidelity."
+    - "Exclude known VPN/SSO relay IPs if they inflate src_ip variance."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Credential Access"
+    techniques:
+      - "T1110"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+        - "AC"
+      controls:
+        - "SI-4"
+        - "AU-6"
+        - "AC-7"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1110/"
+
+tags:
+  - "domain:identity"
+  - "attack.t1110"
+  - "pattern:progression"

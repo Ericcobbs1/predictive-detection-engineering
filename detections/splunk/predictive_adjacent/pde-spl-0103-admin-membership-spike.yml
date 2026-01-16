@@ -1,0 +1,105 @@
+id: "PDE-SPL-0103"
+name: "Spike in privileged group membership changes"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects spikes in additions to privileged groups within a short window (potential privilege escalation or account takeover)."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_adjacent"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "authorization"
+
+data_sources:
+  - "Windows Security 4728/4732/4756 (member added to group)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=WinEventLog:Security (EventCode=4728 OR EventCode=4732 OR EventCode=4756))
+    | eval actor=coalesce(SubjectUserName, user),
+           target=coalesce(MemberName, TargetUserName),
+           group=coalesce(GroupName, TargetSid)
+    | eval group_l=lower(group)
+    | where match(group_l,"domain admins|enterprise admins|administrators|schema admins")=1
+    | bin _time span=30m
+    | stats count as adds dc(target) as distinct_targets values(target) as targets by _time actor group host
+    | where adds >= 3 OR distinct_targets >= 2
+    | stats sum(adds) as adds
+            max(distinct_targets) as distinct_targets
+            values(targets) as targets
+            earliest(_time) as window_start
+            latest(_time) as window_end
+            by actor group host
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when >=3 adds or >=2 distinct targets are added to privileged groups in 30 minutes."
+
+false_positives:
+  - "Legitimate admin activity during onboarding/offboarding windows."
+  - "Automation accounts making bulk changes."
+
+triage:
+  steps:
+    - "Validate the actor account and whether a change ticket exists."
+    - "Confirm target accounts and immediate post-add activity (admin logons/actions)."
+    - "Check if the actor recently had auth anomalies (failures, new device, unusual geo)."
+
+tuning:
+  knobs:
+    - "Adjust privileged group list and thresholds to match your environment."
+    - "Exclude known automation accounts with documented change control."
+    - "Limit to non-maintenance hours for higher fidelity."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Persistence"
+      - "Privilege Escalation"
+    techniques:
+      - "T1098"
+  cyber_kill_chain:
+    phases:
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "AC"
+        - "AU"
+        - "SI"
+      controls:
+        - "AC-2"
+        - "AU-6"
+        - "SI-4"
+  pci_dss:
+    requirements:
+      - "7.2"
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1098/"
+
+tags:
+  - "domain:identity"
+  - "attack.t1098"
+  - "pattern:privilege"

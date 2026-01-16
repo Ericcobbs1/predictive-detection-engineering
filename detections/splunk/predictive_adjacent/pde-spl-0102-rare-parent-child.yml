@@ -1,0 +1,97 @@
+id: "PDE-SPL-0102"
+name: "Rare parent-child process relationship (rolling baseline)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Flags rare parent-child process pairs by host using a rolling 7-day baseline."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_ready"
+
+severity: "medium"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "process_creation"
+
+data_sources:
+  - "Sysmon Event ID 1 (Process Create)"
+
+query:
+  language: "spl"
+  text: |
+    sourcetype=Sysmon:Operational EventCode=1
+    | eval parent=lower(ParentImage), child=lower(Image)
+    | eval pair=parent." -> ".child
+    | bin _time span=1h
+    | stats count as pair_count by host pair _time
+    | sort 0 host pair _time
+    | streamstats window=168 sum(pair_count) as count_7d by host pair
+    | where count_7d <= 2 AND pair_count >= 1
+    | stats earliest(_time) as first_seen latest(_time) as last_seen values(pair) as rare_pairs max(count_7d) as count_7d by host
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when a parent-child pair has occurred <=2 times in the last 7 days and appears again."
+
+false_positives:
+  - "New software installs/updates."
+  - "Rare but legitimate admin tools."
+
+triage:
+  steps:
+    - "Inspect the parent process context (Office, browser, scripting engines)."
+    - "Validate child binary path and signature; check for execution from user-writable locations."
+    - "Correlate with network connections and persistence-related events near first_seen."
+
+tuning:
+  knobs:
+    - "Adjust baseline window (7–14 days) and rarity threshold (<=2 to <=5)."
+    - "Exclude known benign parent-child chains (software updaters)."
+    - "Scope to high-value endpoints/servers first."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Execution"
+      - "Defense Evasion"
+    techniques:
+      - "T1059"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/tactics/TA0002/"
+
+tags:
+  - "domain:endpoint"
+  - "pattern:rarity"
+  - "pattern:baseline"

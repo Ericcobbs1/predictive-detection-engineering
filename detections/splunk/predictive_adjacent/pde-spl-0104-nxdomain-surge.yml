@@ -1,0 +1,97 @@
+id: "PDE-SPL-0104"
+name: "DNS NXDOMAIN surge by host (possible DGA or misconfig)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects sudden surges in NXDOMAIN responses by host using rolling baseline z-score and absolute threshold."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_adjacent"
+
+severity: "medium"
+
+log_source:
+  platform: "network"
+  product: "dns"
+  category: "dns"
+
+data_sources:
+  - "DNS logs (BIND, Infoblox, Windows DNS, Zeek DNS)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=*dns* OR sourcetype=bro:dns OR sourcetype=zeek:dns)
+    | eval host=coalesce(src_host, host, client, src),
+           rcode=coalesce(rcode, response_code)
+    | where rcode="NXDOMAIN"
+    | bin _time span=10m
+    | stats count as nxdomain_count dc(query) as distinct_queries by _time host
+    | sort 0 host _time
+    | streamstats window=36 avg(nxdomain_count) as avg_6h stdev(nxdomain_count) as sd_6h by host
+    | eval z=if(sd_6h>0,(nxdomain_count-avg_6h)/sd_6h,0)
+    | where nxdomain_count >= 200 OR z >= 4
+    | stats earliest(_time) as first_seen latest(_time) as last_seen max(nxdomain_count) as peak max(z) as max_z by host
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when NXDOMAIN count exceeds threshold or z-score anomaly (z>=4)."
+
+false_positives:
+  - "Misconfigured applications generating invalid DNS queries."
+  - "Internal testing or DNS enumeration tools."
+
+triage:
+  steps:
+    - "Identify top NXDOMAIN queries and look for randomized patterns."
+    - "Correlate host with new processes or scheduled tasks near first_seen."
+    - "Check for unusual outbound connections or beaconing following the surge."
+
+tuning:
+  knobs:
+    - "Tune threshold (200) and baseline window (6h) based on environment."
+    - "Exclude known testing hosts or vulnerability scanners."
+    - "Add allowlist for known misconfigured apps while remediation occurs."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Command and Control"
+    techniques:
+      - "T1071.004"
+  cyber_kill_chain:
+    phases:
+      - "Command and Control"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1071/004/"
+
+tags:
+  - "domain:network"
+  - "attack.t1071.004"
+  - "pattern:anomaly"
