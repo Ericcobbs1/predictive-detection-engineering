@@ -1,0 +1,101 @@
+story_id: "PDE-STORY-0001"
+name: "Binary Location Anomalies and DLL Sideloading"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: >
+  A cohesive detection package focused on early indicators of masquerading and DLL sideloading activity.
+  This story emphasizes predictive-adjacent baselining for rare execution locations and rare DLL loads,
+  then correlates those signals with known persistence and execution techniques.
+
+objectives:
+  - "Detect system-looking binaries executing from anomalous locations (masquerading)."
+  - "Detect rare DLL loads by system processes from non-system paths (sideloading)."
+  - "Correlate endpoint anomalies with persistence signals to increase confidence."
+
+detections:
+  primary:
+    - detection_id: "PDE-SPL-0302"
+      path: "detections/splunk/predictive_adjacent/pde-spl-0302-system-binary-exec-location-anomaly.yml"
+      role: "Primary anomaly signal (execution from anomalous path)"
+    - detection_id: "PDE-SPL-0301"
+      path: "detections/splunk/predictive_adjacent/pde-spl-0301-dll-sideloading-non-system-path.yml"
+      role: "Primary anomaly signal (rare DLL loads from non-system paths)"
+  supporting:
+    - detection_id: "PDE-SPL-0002"
+      path: "detections/splunk/reactive/pde-spl-0002-rundll32-suspicious.yml"
+      role: "LOLBIN execution supporting signal"
+    - detection_id: "PDE-SPL-0003"
+      path: "detections/splunk/reactive/pde-spl-0003-windows-service-created.yml"
+      role: "Persistence supporting signal (service creation)"
+    - detection_id: "PDE-SPL-0005"
+      path: "detections/splunk/reactive/pde-spl-0005-schtasks-created.yml"
+      role: "Persistence supporting signal (scheduled task creation)"
+
+recommended_correlation:
+  description: >
+    If PDE-SPL-0302 or PDE-SPL-0301 triggers, increase priority when any supporting signal occurs
+    within a 60-minute window on the same host.
+  correlation_keys:
+    - "host"
+  window: "60m"
+  escalation_logic:
+    - "If (PDE-SPL-0301 OR PDE-SPL-0302) AND (PDE-SPL-0003 OR PDE-SPL-0005) then escalate severity to critical."
+    - "If (PDE-SPL-0301 OR PDE-SPL-0302) AND (PDE-SPL-0002) then escalate severity to high."
+
+deployment_notes:
+  scheduling:
+    - "Run PDE-SPL-0301 and PDE-SPL-0302 every 10 minutes, lookback 24 hours (baseline uses rolling history)."
+    - "Run supporting detections every 5 minutes, lookback 5 minutes."
+  throttling:
+    - "Throttle primary anomaly alerts by host for 60 minutes."
+    - "Throttle supporting alerts by host for 30 minutes."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Defense Evasion"
+      - "Execution"
+      - "Persistence"
+      - "Privilege Escalation"
+    techniques:
+      - "T1036"
+      - "T1218"
+      - "T1574.002"
+      - "T1543.003"
+      - "T1053.005"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+        - "Respond"
+      categories:
+        - "DE.CM"
+        - "RS.AN"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "Sigma inspiration set: DLL sideloading and system binary path anomaly rules"
+tags:
+  - "story:endpoint"
+  - "story:masquerading"
+  - "story:dll-sideloading"
+  - "domain:endpoint"
+
