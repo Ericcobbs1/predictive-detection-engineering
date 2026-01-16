@@ -1,0 +1,100 @@
+id: "PDE-SPL-0201"
+name: "Forecast license/ingest exhaustion (early warning)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Forecasts daily ingest volume and alerts if forecast crosses the configured license limit within the horizon. Operational capacity early-warning detection."
+
+detection_type: "predictive"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "splunk"
+  product: "license"
+  category: "ingest_volume"
+
+data_sources:
+  - "Splunk internal license usage (_internal, license_usage.log)"
+
+query:
+  language: "spl"
+  text: |
+    index=_internal sourcetype=license_usage type=Usage
+    | eval gb=b/1024/1024/1024
+    | timechart span=1d sum(gb) as daily_gb
+    | fillnull value=0 daily_gb
+    | predict daily_gb as forecast_gb future_timespan=7 holdback=0 algorithm=LLP
+    | eval license_limit_gb=2500
+    | eval will_exceed=if(forecast_gb>license_limit_gb,1,0)
+    | where will_exceed=1
+    | stats earliest(_time) as first_exceed_time
+            min(forecast_gb) as min_forecast_gb
+            max(forecast_gb) as max_forecast_gb
+            values(license_limit_gb) as license_limit_gb
+
+features:
+  - name: "daily_gb"
+    description: "Daily ingest volume in GB computed from license usage logs."
+    field: "b"
+    aggregation: "sum by day"
+    window: "1d"
+
+prediction:
+  target: "daily ingest volume (GB)"
+  horizon: "7 days"
+  method: "time-series forecasting using Splunk predict (LLP)"
+
+alert_condition: "Alert when forecast_gb exceeds license_limit_gb at any point in the 7-day horizon."
+
+false_positives:
+  - "Planned onboarding of large data sources."
+  - "One-time backfills or replays not reflective of steady state."
+
+triage:
+  steps:
+    - "Confirm whether upcoming ingest increase is expected (new onboarding, backfill, project)."
+    - "Identify top contributors by index and sourcetype using license usage breakdown searches."
+    - "If unplanned, implement filtering, throttling, or adjust onboarding timelines."
+
+tuning:
+  knobs:
+    - "Set license_limit_gb to match your environment."
+    - "Adjust future_timespan (7–30 days) and timechart span (1d vs 1h)."
+    - "Exclude known one-time backfills during tuning."
+
+mappings:
+  mitre_attack:
+    tactics: []
+    techniques: []
+  cyber_kill_chain:
+    phases:
+      - "Actions on Objectives"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+    nist_800_53:
+      families:
+        - "AU"
+        - "SI"
+      controls:
+        - "AU-6"
+        - "SI-4"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://docs.splunk.com/Documentation/Splunk/latest/SearchReference/Predict"
+
+tags:
+  - "domain:operations"
+  - "pattern:forecast"
+  - "usecase:capacity"
