@@ -1,0 +1,421 @@
+source_id: splunk_starter_pack
+generated_at: ""
+records:
+  - detection_id: "PDE-SPL-0001"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/reactive/pde-spl-0001-powershell-encodedcommand.yml"
+    name: "PowerShell with EncodedCommand"
+    description: "Detects PowerShell execution using -EncodedCommand or equivalent flags."
+    query_language: "spl"
+    detection_type: "reactive"
+    predictive_readiness: "reactive_only"
+    severity: "high"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "process_creation"
+    data_sources:
+      - "Sysmon Event ID 1 (Process Create)"
+      - "Windows Security 4688 (Process Creation)"
+    tactics:
+      - "Execution"
+    techniques:
+      - "T1059.001"
+    tags:
+      - "domain:endpoint"
+      - "language:powershell"
+      - "attack.t1059.001"
+    time_window: ""
+    references:
+      - "https://attack.mitre.org/techniques/T1059/001/"
+      - "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-4688"
+    false_positives:
+      - "Legitimate administrative or automation scripts that use encoded commands."
+    notes: "Kill Chain: Exploitation/Installation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0002"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/reactive/pde-spl-0002-rundll32-suspicious.yml"
+    name: "Suspicious rundll32 execution patterns"
+    description: "Detects rundll32 patterns with URL/UNC usage and execution from user-writable paths."
+    query_language: "spl"
+    detection_type: "reactive"
+    predictive_readiness: "reactive_only"
+    severity: "medium"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "process_creation"
+    data_sources:
+      - "Sysmon Event ID 1 (Process Create)"
+      - "Windows Security 4688 (Process Creation)"
+    tactics:
+      - "Defense Evasion"
+      - "Execution"
+    techniques:
+      - "T1218.011"
+    tags:
+      - "domain:endpoint"
+      - "lolbin:rundll32"
+      - "attack.t1218.011"
+    time_window: ""
+    references:
+      - "https://attack.mitre.org/techniques/T1218/011/"
+    false_positives:
+      - "Rare legitimate software that uses rundll32 with unusual parameters."
+    notes: "Kill Chain: Installation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0003"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/reactive/pde-spl-0003-windows-service-created.yml"
+    name: "Windows service creation detected"
+    description: "Detects creation of a new Windows service (EventCode 7045)."
+    query_language: "spl"
+    detection_type: "reactive"
+    predictive_readiness: "predictive_adjacent"
+    severity: "medium"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "service_creation"
+    data_sources:
+      - "Windows System 7045 (Service installed)"
+    tactics:
+      - "Persistence"
+      - "Privilege Escalation"
+    techniques:
+      - "T1543.003"
+    tags:
+      - "domain:endpoint"
+      - "persistence:service"
+      - "attack.t1543.003"
+    time_window: ""
+    references:
+      - "https://attack.mitre.org/techniques/T1543/003/"
+    false_positives:
+      - "Legitimate software installs and updates."
+      - "Authorized admin activity during maintenance windows."
+    notes: "Kill Chain: Installation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0004"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/reactive/pde-spl-0004-failed-logons-threshold.yml"
+    name: "Multiple failed logons for a user in a short window"
+    description: "Detects repeated failed logons for a user within a short time window."
+    query_language: "spl"
+    detection_type: "predictive_adjacent"
+    predictive_readiness: "predictive_adjacent"
+    severity: "medium"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "authentication"
+    data_sources:
+      - "Windows Security 4625 (Failed Logon)"
+    tactics:
+      - "Credential Access"
+    techniques:
+      - "T1110"
+    tags:
+      - "domain:identity"
+      - "attack.t1110"
+      - "pattern:bruteforce"
+    time_window: "5m"
+    references:
+      - "https://attack.mitre.org/techniques/T1110/"
+    false_positives:
+      - "Users mistyping passwords."
+      - "Service accounts with stale credentials."
+      - "Identity provider or domain controller issues causing widespread failures."
+    notes: "Kill Chain: Exploitation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0005"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/reactive/pde-spl-0005-schtasks-created.yml"
+    name: "Scheduled task creation detected (potential persistence)"
+    description: "Detects scheduled task creation (Security 4698) or schtasks.exe execution."
+    query_language: "spl"
+    detection_type: "reactive"
+    predictive_readiness: "reactive_only"
+    severity: "medium"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "scheduled_task"
+    data_sources:
+      - "Windows Security 4698 (Task Created)"
+      - "Sysmon Event ID 1 (schtasks.exe execution)"
+    tactics:
+      - "Persistence"
+      - "Execution"
+    techniques:
+      - "T1053.005"
+    tags:
+      - "domain:endpoint"
+      - "persistence:scheduled_task"
+      - "attack.t1053.005"
+    time_window: ""
+    references:
+      - "https://attack.mitre.org/techniques/T1053/005/"
+    false_positives:
+      - "Legitimate IT automation and endpoint management tooling."
+      - "Software updaters that create scheduled tasks."
+    notes: "Kill Chain: Installation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0101"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive_adjacent/pde-spl-0101-failures-then-success.yml"
+    name: "Authentication failures followed by a success (possible brute force progression)"
+    description: "Detects multiple auth failures followed by a success for the same user within ~30 minutes."
+    query_language: "spl"
+    detection_type: "predictive_adjacent"
+    predictive_readiness: "predictive_ready"
+    severity: "high"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "authentication"
+    data_sources:
+      - "Windows Security 4625 (Failed Logon)"
+      - "Windows Security 4624 (Successful Logon)"
+    tactics:
+      - "Credential Access"
+    techniques:
+      - "T1110"
+    tags:
+      - "domain:identity"
+      - "attack.t1110"
+      - "pattern:progression"
+    time_window: "30m"
+    references:
+      - "https://attack.mitre.org/techniques/T1110/"
+    false_positives:
+      - "User mistyped password repeatedly then succeeded."
+      - "Service account password changes or sync delays."
+    notes: "Kill Chain: Exploitation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0102"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive_adjacent/pde-spl-0102-rare-parent-child.yml"
+    name: "Rare parent-child process relationship (rolling baseline)"
+    description: "Flags rare parent-child process pairs by host using a rolling 7-day baseline."
+    query_language: "spl"
+    detection_type: "predictive_adjacent"
+    predictive_readiness: "predictive_ready"
+    severity: "medium"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "process_creation"
+    data_sources:
+      - "Sysmon Event ID 1 (Process Create)"
+    tactics:
+      - "Execution"
+      - "Defense Evasion"
+    techniques:
+      - "T1059"
+    tags:
+      - "domain:endpoint"
+      - "pattern:rarity"
+      - "pattern:baseline"
+    time_window: "7d baseline (rolling)"
+    references:
+      - "https://attack.mitre.org/tactics/TA0002/"
+    false_positives:
+      - "New software installs/updates."
+      - "Rare but legitimate admin tools."
+    notes: "Kill Chain: Exploitation/Installation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0103"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive_adjacent/pde-spl-0103-admin-membership-spike.yml"
+    name: "Spike in privileged group membership changes"
+    description: "Detects spikes in additions to privileged groups within a short window."
+    query_language: "spl"
+    detection_type: "predictive_adjacent"
+    predictive_readiness: "predictive_adjacent"
+    severity: "high"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "authorization"
+    data_sources:
+      - "Windows Security 4728/4732/4756 (member added to group)"
+    tactics:
+      - "Persistence"
+      - "Privilege Escalation"
+    techniques:
+      - "T1098"
+    tags:
+      - "domain:identity"
+      - "attack.t1098"
+      - "pattern:privilege"
+    time_window: "30m"
+    references:
+      - "https://attack.mitre.org/techniques/T1098/"
+    false_positives:
+      - "Legitimate admin activity during onboarding/offboarding windows."
+      - "Automation accounts making bulk changes."
+    notes: "Kill Chain: Installation. NIST CSF: DE.CM. PCI DSS: 7.2/10.2/10.6."
+
+  - detection_id: "PDE-SPL-0104"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive_adjacent/pde-spl-0104-nxdomain-surge.yml"
+    name: "DNS NXDOMAIN surge by host (possible DGA or misconfig)"
+    description: "Detects NXDOMAIN surges using rolling baseline z-score and threshold."
+    query_language: "spl"
+    detection_type: "predictive_adjacent"
+    predictive_readiness: "predictive_adjacent"
+    severity: "medium"
+    status: "experimental"
+    platform: "network"
+    product: "dns"
+    category: "dns"
+    data_sources:
+      - "DNS logs (BIND, Infoblox, Windows DNS, Zeek DNS)"
+    tactics:
+      - "Command and Control"
+    techniques:
+      - "T1071.004"
+    tags:
+      - "domain:network"
+      - "attack.t1071.004"
+      - "pattern:anomaly"
+    time_window: "10m buckets, 6h baseline (rolling)"
+    references:
+      - "https://attack.mitre.org/techniques/T1071/004/"
+    false_positives:
+      - "Misconfigured applications generating invalid DNS queries."
+      - "Internal testing or DNS enumeration tools."
+    notes: "Kill Chain: Command and Control. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0105"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive_adjacent/pde-spl-0105-cloud-api-rate-spike.yml"
+    name: "Cloud API call rate spike by principal (leading indicator of abuse)"
+    description: "Detects spikes in CloudTrail API calls by principal using rolling baseline z-score and threshold."
+    query_language: "spl"
+    detection_type: "predictive_adjacent"
+    predictive_readiness: "predictive_adjacent"
+    severity: "medium"
+    status: "experimental"
+    platform: "aws"
+    product: "cloudtrail"
+    category: "api_activity"
+    data_sources:
+      - "AWS CloudTrail"
+    tactics:
+      - "Discovery"
+      - "Privilege Escalation"
+    techniques:
+      - "T1087"
+    tags:
+      - "domain:cloud"
+      - "platform:aws"
+      - "pattern:rate_spike"
+    time_window: "5m buckets, 24h baseline (rolling)"
+    references:
+      - "https://attack.mitre.org/techniques/T1087/"
+    false_positives:
+      - "Legitimate CI/CD, Terraform, backups, or inventory jobs."
+      - "Bulk audit or incident response collection."
+    notes: "Kill Chain: Reconnaissance. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0201"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive/pde-spl-0201-license-forecast-exhaustion.yml"
+    name: "Forecast license/ingest exhaustion (early warning)"
+    description: "Forecasts daily ingest volume and alerts if forecast crosses license limit. Operational capacity early warning."
+    query_language: "spl"
+    detection_type: "predictive"
+    predictive_readiness: "predictive_ready"
+    severity: "high"
+    status: "experimental"
+    platform: "splunk"
+    product: "license"
+    category: "ingest_volume"
+    data_sources:
+      - "Splunk internal license usage (_internal, license_usage.log)"
+    tactics: []
+    techniques: []
+    tags:
+      - "domain:operations"
+      - "pattern:forecast"
+      - "usecase:capacity"
+    time_window: "1d buckets, 7d forecast horizon"
+    references:
+      - "https://docs.splunk.com/Documentation/Splunk/latest/SearchReference/Predict"
+    false_positives:
+      - "Planned onboarding of large data sources."
+      - "One-time backfills or replays not reflective of steady state."
+    notes: "Operational detection (no ATT&CK). Kill Chain: Actions on Objectives. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0202"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive/pde-spl-0202-auth-failure-forecast.yml"
+    name: "Forecast authentication failure surge (early brute force warning)"
+    description: "Forecasts short-term auth failures and alerts if forecast exceeds threshold."
+    query_language: "spl"
+    detection_type: "predictive"
+    predictive_readiness: "predictive_ready"
+    severity: "high"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "authentication"
+    data_sources:
+      - "Windows Security 4625 (Failed Logon)"
+    tactics:
+      - "Credential Access"
+    techniques:
+      - "T1110"
+    tags:
+      - "domain:identity"
+      - "attack.t1110"
+      - "pattern:forecast"
+    time_window: "5m buckets, 60m forecast horizon"
+    references:
+      - "https://attack.mitre.org/techniques/T1110/"
+      - "https://docs.splunk.com/Documentation/Splunk/latest/SearchReference/Predict"
+    false_positives:
+      - "Password spray tests by internal security teams."
+      - "Authentication outage or misconfiguration causing elevated failures."
+    notes: "Kill Chain: Exploitation. NIST CSF: DE.CM. PCI DSS: 10.2/10.6."
+
+  - detection_id: "PDE-SPL-0203"
+    source_id: "splunk_starter_pack"
+    source_rule_path: "detections/splunk/predictive/pde-spl-0203-account-compromise-risk-trajectory.yml"
+    name: "Account compromise risk trajectory (score acceleration)"
+    description: "Computes rolling risk score from auth leading indicators and alerts on high or accelerating risk."
+    query_language: "spl"
+    detection_type: "predictive"
+    predictive_readiness: "predictive_ready"
+    severity: "high"
+    status: "experimental"
+    platform: "windows"
+    product: "security"
+    category: "authentication"
+    data_sources:
+      - "Windows Security 4625 (Failed Logon)"
+      - "Windows Security 4624 (Successful Logon) optional"
+    tactics:
+      - "Credential Access"
+      - "Defense Evasion"
+      - "Initial Access"
+    techniques:
+      - "T1110"
+      - "T1078"
+    tags:
+      - "domain:identity"
+      - "attack.t1110"
+      - "attack.t1078"
+      - "pattern:risk_scoring"
+      - "pattern:trajectory"
+    time_window: "10m buckets, 60m rolling risk window"
+    references:
+      - "https://attack.mitre.org/techniques/T1110/"
+      - "https://attack.mitre.org/techniques/T1078/"
+    false_positives:
+      - "Password reset events causing clustered failures then success."
+      - "Shared accounts generating diverse source IPs."
+    notes: "Kill Chain: Exploitation/Installation. NIST CSF: DE.CM + RS.AN. PCI DSS: 10.2/10.6."
