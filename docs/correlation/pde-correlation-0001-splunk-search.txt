@@ -1,0 +1,26 @@
+# Correlation Search (Concept): Admin Trajectory + Endpoint Anomalies
+# This search is a template. You must adapt it to your alert storage method.
+# Option A: If you use Splunk's "Triggered Alerts" index / notable storage, query those events.
+# Option B: If you log alert actions to an index, query that index.
+
+# Pseudo-approach:
+# - Find PDE-SPL-0304 triggers in last 60m
+# - Extract dest_hosts list
+# - Join/lookup endpoint anomaly triggers on those hosts within the same window
+# - Escalate if correlated
+
+# Replace <ALERT_INDEX> and field names with your environment equivalents.
+
+index=<ALERT_INDEX> (detection_id="PDE-SPL-0304") earliest=-60m
+| eval user=coalesce(user, triggered_user)
+| mvexpand dest_hosts
+| rename dest_hosts as host
+| join type=inner host [
+    search index=<ALERT_INDEX> earliest=-60m (detection_id="PDE-SPL-0301" OR detection_id="PDE-SPL-0302")
+    | eval host=coalesce(host, dest_host)
+    | stats values(detection_id) as endpoint_detections earliest(_time) as first_endpoint latest(_time) as last_endpoint by host
+  ]
+| stats values(endpoint_detections) as endpoint_detections earliest(_time) as first_identity latest(_time) as last_identity by user host
+| eval escalation=if(mvcount(endpoint_detections)>0,"CRITICAL","HIGH")
+| table escalation user host endpoint_detections first_identity last_identity first_endpoint last_endpoint
+
