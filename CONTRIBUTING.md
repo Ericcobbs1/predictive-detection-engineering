@@ -154,3 +154,5 @@ Operational detections (for example, capacity forecasting) may leave ATT&CK arra
 mitre_attack:
   tactics: []
   techniques: []
+
+.
