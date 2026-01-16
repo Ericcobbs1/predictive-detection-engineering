@@ -155,4 +155,4 @@ mitre_attack:
   tactics: []
   techniques: []
 
-.
+..
