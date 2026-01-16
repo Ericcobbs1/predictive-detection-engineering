@@ -5,35 +5,65 @@ status: "draft"  # draft | experimental | production
 owner: ""
 description: ""
 
+# Detection classification
 detection_type: "reactive"  # reactive | predictive_adjacent | predictive
 predictive_readiness: "reactive_only"  # reactive_only | predictive_adjacent | predictive_ready
 
 severity: "medium"  # informational | low | medium | high | critical
 
+# Log source context
 log_source:
-  platform: ""   # e.g., windows, linux, aws, azure, gcp, saas
-  product: ""    # e.g., security, cloudtrail, m365, okta
-  category: ""   # e.g., process_creation, authentication, network
+  platform: ""   # windows | linux | aws | azure | gcp | saas | network | splunk
+  product: ""    # security | cloudtrail | m365 | okta | dns | license | etc.
+  category: ""   # process_creation | authentication | network | api_activity | etc.
 
+# Data requirements
 data_sources: []
 
+# Detection logic
 query:
-  language: ""   # sigma | spl | kql | eql | yaral | lucene | python
+  language: ""   # spl | sigma | kql | eql | yaral | lucene | python | other
   text: ""
 
+# Feature engineering (required for predictive detections)
 features: []
+
+# Prediction metadata (required for predictive detections)
 prediction:
   target: ""
   horizon: ""
   method: ""
 
+# Alert semantics
 alert_condition: ""
 
+# Operational context
 false_positives: []
+
 triage:
   steps: []
+
 tuning:
   knobs: []
 
+# Governance & framework mappings (REQUIRED)
+mappings:
+  mitre_attack:
+    tactics: []        # e.g., Execution, Persistence, Credential Access
+    techniques: []     # e.g., T1059.001
+  cyber_kill_chain:
+    phases: []         # Reconnaissance | Weaponization | Delivery | Exploitation | Installation | C2 | Actions on Objectives
+  nist:
+    csf:
+      functions: []    # Identify | Protect | Detect | Respond | Recover
+      categories: []   # e.g., DE.CM
+      subcategories: []  # e.g., DE.CM-1
+    nist_800_53:
+      families: []     # e.g., SI, AU
+      controls: []     # e.g., SI-4, AU-6
+  pci_dss:
+    requirements: []  # e.g., 10.2, 10.6
+
+# References and tags
 references: []
 tags: []
