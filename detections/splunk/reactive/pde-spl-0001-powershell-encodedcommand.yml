@@ -1,0 +1,99 @@
+id: "PDE-SPL-0001"
+name: "PowerShell with EncodedCommand"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects PowerShell execution using -EncodedCommand or equivalent flags. Baseline reactive detection with governance mappings."
+
+detection_type: "reactive"
+predictive_readiness: "reactive_only"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "security"
+  category: "process_creation"
+
+data_sources:
+  - "Sysmon Event ID 1 (Process Create)"
+  - "Windows Security 4688 (Process Creation)"
+
+query:
+  language: "spl"
+  text: |
+    (sourcetype=Sysmon:Operational EventCode=1) OR (sourcetype=WinEventLog:Security EventCode=4688)
+    | eval Image=coalesce(Image, New_Process_Name),
+           CommandLine=coalesce(CommandLine, Process_Command_Line)
+    | search Image="*\\powershell.exe" OR Image="*\\pwsh.exe"
+    | search (CommandLine="*-enc*" OR CommandLine="*-encodedcommand*" OR CommandLine="*FromBase64String*")
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            values(CommandLine) as command_lines
+            count as event_count
+            by host user Image
+
+features: []
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Trigger when event_count >= 1."
+
+false_positives:
+  - "Legitimate administrative or automation scripts that use encoded commands."
+
+triage:
+  steps:
+    - "Review the full PowerShell command line for intent and payload characteristics."
+    - "Inspect the parent process (Office apps, browsers, script hosts) and execution chain."
+    - "Check execution path, binary signing, and whether this aligns with change windows."
+    - "Correlate around first_seen/last_seen for follow-on behaviors (download, persistence, lateral movement, outbound C2)."
+
+tuning:
+  knobs:
+    - "Whitelist known automation/deployment tooling and approved script patterns."
+    - "Require suspicious parent processes (e.g., winword.exe, excel.exe, mshta.exe) to increase fidelity."
+    - "Scope to high-value systems or admin accounts if volume is high."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Execution"
+    techniques:
+      - "T1059.001"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "https://attack.mitre.org/techniques/T1059/001/"
+  - "https://learn.microsoft.com/windows/security/threat-protection/auditing/event-4688"
+
+tags:
+  - "domain:endpoint"
+  - "language:powershell"
+  - "attack.t1059.001"
