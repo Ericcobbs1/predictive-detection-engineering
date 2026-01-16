@@ -19,6 +19,7 @@
     "false_positives",
     "triage",
     "tuning",
+    "mappings",
     "references",
     "tags"
   ],
@@ -119,6 +120,65 @@
         "knobs": {
           "type": "array",
           "items": { "type": "string" }
+        }
+      }
+    },
+
+    "mappings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mitre_attack", "cyber_kill_chain", "nist", "pci_dss"],
+      "properties": {
+        "mitre_attack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tactics", "techniques"],
+          "properties": {
+            "tactics": { "type": "array", "items": { "type": "string" } },
+            "techniques": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "cyber_kill_chain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["phases"],
+          "properties": {
+            "phases": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "nist": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["csf", "nist_800_53"],
+          "properties": {
+            "csf": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["functions", "categories", "subcategories"],
+              "properties": {
+                "functions": { "type": "array", "items": { "type": "string" } },
+                "categories": { "type": "array", "items": { "type": "string" } },
+                "subcategories": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "nist_800_53": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["families", "controls"],
+              "properties": {
+                "families": { "type": "array", "items": { "type": "string" } },
+                "controls": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "pci_dss": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requirements"],
+          "properties": {
+            "requirements": { "type": "array", "items": { "type": "string" } }
+          }
         }
       }
     },
