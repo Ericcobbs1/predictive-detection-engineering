@@ -4,7 +4,380 @@ selection_criteria:
   include_labels:
     - predictive_ready
     - predictive_adjacent
-  min_score: 8
-  notes: "Curated shortlist for Splunk-first conversions (predictive engineering roadmap)."
+  min_score: 9
+  notes: >
+    Curated shortlist derived from Sigma top-scoring rules. Focused on Splunk-first conversions using common telemetry
+    (Windows Security, Sysmon, DNS, CodeIntegrity, IIS). Items marked "later" are app-specific and may require
+    specialized logs (ScreenConnect, Bitbucket, Commvault).
 
-candidates: []
+candidates:
+  - sigma_id: "4fc0deee-0057-4998-ab31-d24e46e0aba4"
+    title: "Potential System DLL Sideloading From Non System Locations"
+    readiness_score: 15
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "Sysmon Event ID 1 (process creation)"
+      - "Sysmon Event ID 7 (image loaded) optional but recommended"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Baseline rare DLL loads for signed system processes from non-system paths; alert on rarity + suspicious path."
+      features:
+        - "rare DLL path for system process"
+        - "parent/child context"
+        - "load frequency baseline (7–14d)"
+      notes: "Great candidate for baseline/rarity modeling and progression to predictive trajectory."
+
+  - sigma_id: "d5866ddf-ce8f-4aea-b28e-d96485a20d3d"
+    title: "Files With System Process Name In Unsuspected Locations"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "Sysmon Event ID 1"
+      - "File creation telemetry (Sysmon 11) optional"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect execution of system-named binaries (svchost.exe, lsass.exe, etc.) from user-writable/non-system directories."
+      features:
+        - "path anomaly (non-system dir)"
+        - "system process name mimicry"
+      notes: "Straightforward, high-signal, good baseline."
+
+  - sigma_id: "e4a6b256-3e47-40fc-89d2-7a477edd6915"
+    title: "System File Execution Location Anomaly"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "Sysmon Event ID 1"
+      - "Windows Security 4688 optional"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Rarity/baseline of executable name vs expected directories; alert when common system binaries run from non-standard paths."
+      features:
+        - "baseline expected paths"
+        - "rarity score for (ImageName, Path)"
+      notes: "Pairs well with 4fc0deee for a 'binary location anomaly' story."
+
+  - sigma_id: "a18dd26b-6450-46de-8c91-9659150cf088"
+    title: "Potentially Suspicious GrantedAccess Flags On LSASS"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "Sysmon Event ID 10 (ProcessAccess) or EDR equivalent"
+      - "Windows Security 4688 optional for process context"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect suspicious access rights requested against lsass.exe."
+      features:
+        - "GrantedAccess flag patterns"
+        - "source process context"
+      notes: "High value, but depends on Sysmon ProcessAccess telemetry availability."
+
+  - sigma_id: "678dfc63-fefb-47a5-a04c-26bcf8cc9f65"
+    title: "Uncommon GrantedAccess Flags On LSASS"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Sysmon Event ID 10 (ProcessAccess) or EDR equivalent"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Baseline common GrantedAccess patterns by environment; alert on rare flag combos or rare source processes."
+      features:
+        - "rarity of GrantedAccess by host"
+        - "new source process accessing lsass"
+      notes: "Upgrades the LSASS detection into baseline-based scoring."
+
+  - sigma_id: "ede05abc-2c9e-4624-9944-9ff17fdc0bf5"
+    title: "Suspicious DNS Z Flag Bit Set"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "DNS logs (Zeek DNS recommended)"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Detect and baseline unusual DNS header/flag behaviors; alert on Z-flag usage and co-occurring anomalies (NXDOMAIN spikes, rare query patterns)."
+      features:
+        - "dns flag bit anomalies"
+        - "co-occurrence with NXDOMAIN surge"
+      notes: "Great for early-warning C2 indicators when Zeek DNS fields exist."
+
+  - sigma_id: "4d07b1f4-cb00-4470-b9f8-b0191d48ff52"
+    title: "DNS Query To Remote Access Software Domain From Non-Browser App"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "DNS logs (plus process context if available: Sysmon 1 + DNS correlation)"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Detect DNS queries for known remote-access domains from unusual/rare processes; baseline per host."
+      features:
+        - "domain category (remote access)"
+        - "process-to-domain rarity"
+      notes: "If you lack process/DNS correlation, start with DNS-only + host baseline."
+
+  - sigma_id: "614cf376-6651-47c4-9dcc-6b9527f749f4"
+    title: "Suspicious Scheduled Task Update"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "Windows Security scheduled task events (4698/4702 if available) or Sysmon schtasks.exe activity"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Baseline scheduled task modifications; alert on rare task names/paths, changes outside maintenance windows, or suspicious execution targets."
+      features:
+        - "task update rarity"
+        - "suspicious execution path"
+      notes: "Builds on PDE-SPL-0005; great progression to predictive scoring."
+
+  - sigma_id: "b18454c8-0be3-41f7-86bc-9c614611b839"
+    title: "Multi Factor Authentication Disabled For User Account"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Identity provider logs (Azure AD / Okta / etc.)"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect MFA disablement events; optionally correlate with prior risky sign-in signals."
+      features:
+        - "MFA disable event"
+        - "actor/target context"
+      notes: "Use later if you have IdP logs in lab."
+
+  - sigma_id: "02f7c9c1-1ae8-4c6a-8add-04693807f92f"
+    title: "Potential Access Token Abuse"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Windows Security (Kerberos/Logon events) and/or endpoint token telemetry"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Correlate token-related anomalies with privileged access and lateral movement indicators."
+      features:
+        - "token-use anomalies"
+        - "privileged session context"
+      notes: "May require richer endpoint/auth telemetry; keep as P2."
+
+  - sigma_id: "192a0330-c20b-4356-90b6-7b7049ae0b87"
+    title: "Successful Overpass the Hash Attempt"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Windows Security Kerberos events (4768/4769/4771/4624 variants) depending on environment"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect Overpass-the-Hash style Kerberos anomalies; then add predictive progression correlation (auth anomalies → privileged logon)."
+      features:
+        - "Kerberos anomaly indicators"
+        - "success after anomaly"
+      notes: "Excellent but requires correct Kerberos telemetry."
+
+  - sigma_id: "0f63e1ef-1eb9-4226-9d54-8927ca08520a"
+    title: "Admin User Remote Logon"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P1"
+    data_requirements:
+      - "Windows Security 4624 (logon types)"
+      - "Group membership context (optional)"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Detect remote logons for admin users; baseline per admin for source IP/host rarity; alert on new source + time-of-day anomalies."
+      features:
+        - "admin remote logon"
+        - "src_ip/host novelty"
+        - "time-of-day deviation"
+      notes: "Great for predictive risk scoring layered on auth baseline."
+
+  - sigma_id: "f8931561-97f5-4c46-907f-0a4a592e47a7"
+    title: "CodeIntegrity - Unmet Signing Level Requirements By File Under Validation"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Windows CodeIntegrity logs (if enabled)"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect CodeIntegrity events indicating unsigned/invalid signing level; correlate with process creation from user-writable paths."
+      features:
+        - "signing level anomaly"
+        - "execution chain"
+      notes: "High value but depends on CodeIntegrity log availability."
+
+  # App-specific / environment-specific (later)
+  - sigma_id: "1a821580-588b-4323-9422-660f7e131020"
+    title: "ScreenConnect User Database Modification"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P3"
+    data_requirements:
+      - "ScreenConnect logs"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Implement when ScreenConnect telemetry exists."
+      features: []
+      notes: "Later: app-specific."
+
+  - sigma_id: "4109cb6a-a4af-438a-9f0c-056abba41c6f"
+    title: "ScreenConnect User Database Modification - Security"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P3"
+    data_requirements:
+      - "ScreenConnect logs"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Implement when ScreenConnect telemetry exists."
+      features: []
+      notes: "Later: app-specific."
+
+  - sigma_id: "d3f90469-fb05-42ce-b67d-0fded91bbef3"
+    title: "Bitbucket User Login Failure Via SSH"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P3"
+    data_requirements:
+      - "Bitbucket audit/auth logs"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Implement when Bitbucket logs exist; similar to auth baseline forecasting."
+      features: []
+      notes: "Later: app-specific."
+
+  - sigma_id: "bd3b3fff-a018-4994-9876-68af5809160f"
+    title: "Commvault QOperation Path Traversal Webshell Drop (CVE-2025-57790)"
+    readiness_score: 10
+    readiness_label: "predictive_ready"
+    priority: "P3"
+    data_requirements:
+      - "Commvault app logs / web server logs"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Implement when Commvault/web logs exist; webshell drop detection."
+      features: []
+      notes: "Later: app-specific vulnerability detection."
+
+  - sigma_id: "aa3168fb-d594-4f93-a92d-7a9ba675b766"
+    title: "Remote Access Tool - Action1 Arbitrary Code Execution and Remote Sessions"
+    readiness_score: 13
+    readiness_label: "predictive_ready"
+    priority: "P3"
+    data_requirements:
+      - "Action1 agent logs and/or endpoint telemetry"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Implement when Action1 telemetry exists."
+      features: []
+      notes: "Later: tool-specific."
+
+  - sigma_id: "69fa9174-4370-4646-8d48-6a22e2853402"
+    title: "Shai-Hulud NPM Attack GitHub Activity"
+    readiness_score: 11
+    readiness_label: "predictive_ready"
+    priority: "P3"
+    data_requirements:
+      - "GitHub audit logs or webhook events"
+    splunk_conversion_plan:
+      detection_type_target: "predictive_adjacent"
+      splunk_folder_target: "detections/splunk/predictive_adjacent"
+      approach: "Implement when GitHub audit logs exist; monitor suspicious repo activity patterns."
+      features: []
+      notes: "Later: SaaS audit telemetry required."
+
+  - sigma_id: "dd857d3e-0c6e-457b-9b48-e82ae7f86bd7"
+    title: "New Module Module Added To IIS Server"
+    readiness_score: 9
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "IIS logs / Windows event logs for IIS module changes"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect new IIS modules; add predictive correlation with webshell indicators."
+      features: []
+      notes: "P2 unless IIS telemetry exists in lab."
+
+  - sigma_id: "d22df9cd-2aee-4089-93c7-9dc4eae77f2c"
+    title: "ISATAP Router Address Was Set"
+    readiness_score: 12
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Windows event logs / registry change telemetry"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Implement when telemetry exists; detect ISATAP config tampering."
+      features: []
+      notes: "May require registry auditing or EDR telemetry."
+
+  - sigma_id: "7d0d0329-0ef1-4e84-a9f5-49500f9d7c6c"
+    title: "Malicious PowerShell Commandlets - PoshModule"
+    readiness_score: 12
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "PowerShell ScriptBlock logging or Module logging"
+      - "Sysmon/4688 optional"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect known malicious cmdlets; enhance with predictive scoring based on precursor behaviors (download + execution)."
+      features: []
+      notes: "Depends on PowerShell logging configuration."
+
+  - sigma_id: "89819aa4-bbd6-46bc-88ec-c7f7fe30efa6"
+    title: "Malicious PowerShell Commandlets - ScriptBlock"
+    readiness_score: 12
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "PowerShell ScriptBlock logging"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect malicious scriptblock content; enhance with baseline + risk scoring."
+      features: []
+      notes: "Depends on ScriptBlock logging availability."
+
+  - sigma_id: "02030f2f-6199-49ec-b258-ea71b07e03dc"
+    title: "Malicious PowerShell Commandlets - ProcessCreation"
+    readiness_score: 12
+    readiness_label: "predictive_ready"
+    priority: "P2"
+    data_requirements:
+      - "Sysmon Event ID 1 / Security 4688"
+    splunk_conversion_plan:
+      detection_type_target: "reactive"
+      splunk_folder_target: "detections/splunk/reactive"
+      approach: "Detect suspicious PowerShell cmdlets via process creation command lines."
+      features: []
+      notes: "Works well in lab if you have Sysmon/4688."
