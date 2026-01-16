@@ -1,0 +1,158 @@
+id: "PDE-SPL-0302"
+name: "System binary execution from anomalous location (baseline rarity)"
+version: "0.1.0"
+status: "experimental"
+owner: "Ericcobbs1"
+description: "Detects system or system-looking binaries executing from non-standard locations using Sysmon process creation telemetry and a rolling baseline. Inspired by Sigma 'System File Execution Location Anomaly'."
+
+detection_type: "predictive_adjacent"
+predictive_readiness: "predictive_ready"
+
+severity: "high"
+
+log_source:
+  platform: "windows"
+  product: "sysmon"
+  category: "process_creation"
+
+data_sources:
+  - "Sysmon Event ID 1 (Process Create)"
+  - "Windows Security 4688 optional enrichment"
+
+query:
+  language: "spl"
+  text: |
+    sourcetype=Sysmon:Operational EventCode=1
+    | eval host=coalesce(host, Computer),
+           user=coalesce(user, User),
+           image=lower(coalesce(Image, ProcessImage, process_path)),
+           parent=lower(coalesce(ParentImage, ParentProcessName, parent_process)),
+           cmd=coalesce(CommandLine, ProcessCommandLine, cmdline)
+    | where isnotnull(image)
+    | eval exe_name=replace(image, "^.*\\\\", "")
+    | eval is_system_name=if(match(exe_name, "^(svchost|lsass|services|winlogon|csrss|explorer|rundll32|dllhost|taskhostw?|spoolsv|conhost|smss|wmiprvse|powershell|pwsh)\\.exe$"), 1, 0)
+    | where is_system_name=1
+    | eval is_standard_path=if(
+        match(image, "\\\\windows\\\\system32\\\\")=1 OR
+        match(image, "\\\\windows\\\\syswow64\\\\")=1 OR
+        match(image, "\\\\windows\\\\explorer\\.exe$")=1,
+        1, 0
+      )
+    | where is_standard_path=0
+    | eval suspicious_path=if(
+        match(image, "\\\\users\\\\")=1 OR
+        match(image, "\\\\appdata\\\\")=1 OR
+        match(image, "\\\\temp\\\\")=1 OR
+        match(image, "\\\\programdata\\\\")=1 OR
+        match(image, "\\\\users\\\\public\\\\")=1,
+        1, 0
+      )
+    | bin _time span=1h
+    | stats count as exec_count values(cmd) as cmds values(parent) as parents max(suspicious_path) as suspicious_path by host exe_name image _time
+    | sort 0 host exe_name image _time
+    | streamstats window=336 sum(exec_count) as exec_14d by host exe_name image
+    | where exec_14d <= 2
+    | eval risk_score=case(
+        suspicious_path=1 AND exec_14d=0, 90,
+        suspicious_path=1 AND exec_14d=1, 75,
+        suspicious_path=1 AND exec_14d=2, 60,
+        suspicious_path=0 AND exec_14d=0, 70,
+        suspicious_path=0 AND exec_14d=1, 55,
+        suspicious_path=0 AND exec_14d=2, 40,
+        true(), 20
+      )
+    | where risk_score >= 60
+    | stats earliest(_time) as first_seen
+            latest(_time) as last_seen
+            max(risk_score) as risk_score
+            sum(exec_count) as recent_exec_count
+            max(exec_14d) as baseline_exec_14d
+            values(cmds) as command_lines
+            values(parents) as parent_images
+            by host exe_name image suspicious_path
+    | sort - risk_score
+
+features:
+  - name: "baseline_exec_14d"
+    description: "Rolling 14-day baseline execution count for (host, exe_name, image path) using 1-hour buckets."
+    field: "image"
+    aggregation: "rolling sum"
+    window: "14d"
+  - name: "suspicious_path"
+    description: "Binary executed from user-writable or commonly abused paths (Users/AppData/Temp/ProgramData/Public)."
+    field: "image"
+    aggregation: "derived flag"
+    window: "n/a"
+
+prediction:
+  target: ""
+  horizon: ""
+  method: ""
+
+alert_condition: "Alert when a system-looking binary executes from a non-standard location and the path is rare on the host over a 14-day baseline (<=2), producing risk_score >= 60."
+
+false_positives:
+  - "Legitimate portable tools named like system binaries (rare but possible)."
+  - "Non-standard enterprise packaging that places utilities in ProgramData or custom folders."
+  - "Golden image changes or new endpoint tooling that temporarily executes from staging paths."
+
+triage:
+  steps:
+    - "Verify whether the binary path is user-writable (Users, AppData, Temp, Public, ProgramData)."
+    - "Check the file’s digital signature, hash reputation, and compile timestamp if available."
+    - "Review parent process and command line to understand how execution was initiated."
+    - "Look for follow-on indicators: network beacons, persistence (tasks/services), credential access attempts."
+    - "If suspected masquerading, retrieve the binary for analysis and check for additional copies elsewhere."
+
+tuning:
+  knobs:
+    - "Adjust baseline window: streamstats window=168 (7d) or 720 (30d)."
+    - "Adjust risk_score threshold (>=60) based on environment noise."
+    - "Extend or reduce the system-like binary name list for your environment."
+    - "Add allowlist for known legitimate paths/binaries used by IT tooling."
+
+mappings:
+  mitre_attack:
+    tactics:
+      - "Defense Evasion"
+      - "Execution"
+    techniques:
+      - "T1036"
+      - "T1218"
+  cyber_kill_chain:
+    phases:
+      - "Exploitation"
+      - "Installation"
+  nist:
+    csf:
+      functions:
+        - "Detect"
+      categories:
+        - "DE.CM"
+      subcategories:
+        - "DE.CM-1"
+        - "DE.CM-7"
+    nist_800_53:
+      families:
+        - "SI"
+        - "AU"
+      controls:
+        - "SI-4"
+        - "AU-6"
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+references:
+  - "Sigma (inspiration): System File Execution Location Anomaly"
+  - "https://attack.mitre.org/techniques/T1036/"
+  - "https://attack.mitre.org/techniques/T1218/"
+  - "https://learn.microsoft.com/sysinternals/downloads/sysmon"
+
+tags:
+  - "domain:endpoint"
+  - "pattern:baseline"
+  - "pattern:rarity"
+  - "technique:masquerading"
+  - "attack.t1036"
