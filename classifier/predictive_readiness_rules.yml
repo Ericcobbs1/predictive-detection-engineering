@@ -1,0 +1,152 @@
+classifier:
+  name: predictive_readiness
+  version: "1.0.0"
+  description: "Deterministic scoring rubric for predictive readiness"
+  labels:
+    reactive_only:
+      min_score: 0
+      max_score: 3
+    predictive_adjacent:
+      min_score: 4
+      max_score: 7
+    predictive_ready:
+      min_score: 8
+      max_score: 999
+
+  rules:
+    - id: sequence_or_progression_logic
+      points: 4
+      evidence:
+        keywords:
+          - "sequence"
+          - "followed by"
+          - "then"
+          - "next"
+          - "progression"
+          - "multi-stage"
+          - "ordered"
+          - "chain"
+          - "transaction"
+          - "streamstats"
+        languages:
+          - "eql"
+          - "yaral"
+      splunk_alignment:
+        - "transaction/sessionization"
+        - "streamstats ordering/state"
+        - "multi-stage correlation searches"
+
+    - id: baseline_or_anomaly_framing
+      points: 4
+      evidence:
+        keywords:
+          - "baseline"
+          - "anomaly"
+          - "outlier"
+          - "deviation"
+          - "forecast"
+          - "predict"
+          - "z-score"
+          - "stddev"
+          - "machine learning"
+          - "ml"
+      splunk_alignment:
+        - "predict command"
+        - "rolling baseline via streamstats/eventstats"
+        - "z-score anomaly patterns"
+
+    - id: time_window_aggregation
+      points: 2
+      evidence:
+        keywords:
+          - "bin _time"
+          - "timechart"
+          - "span="
+          - "window"
+          - "within"
+          - "over"
+          - "minutes"
+          - "hours"
+          - "days"
+          - "count"
+          - "threshold"
+      splunk_alignment:
+        - "timechart/bin _time"
+        - "stats count over window"
+        - "rate-based thresholds"
+
+    - id: distinct_or_novel_entity_logic
+      points: 3
+      evidence:
+        keywords:
+          - "rare"
+          - "new"
+          - "first seen"
+          - "previously unseen"
+          - "unique"
+          - "distinct"
+          - "cardinality"
+          - "dc("
+      splunk_alignment:
+        - "dc(field)"
+        - "rare command"
+        - "first_seen/last_seen lookup patterns"
+
+    - id: multi_signal_correlation
+      points: 3
+      evidence:
+        keywords:
+          - "correlat"
+          - "join"
+          - "combined"
+          - "multiple sources"
+          - "cross-source"
+      splunk_alignment:
+        - "join/stats across sourcetypes"
+        - "tstats across CIM models"
+        - "correlation searches"
+
+    - id: risk_scoring_or_weighting
+      points: 3
+      evidence:
+        keywords:
+          - "risk score"
+          - "weighted"
+          - "score"
+          - "rba"
+          - "risk object"
+          - "risk_delta"
+      splunk_alignment:
+        - "risk score accumulation"
+        - "RBA-style scoring models"
+        - "trajectory/delta scoring"
+
+    - id: repeated_or_escalation_behavior
+      points: 2
+      evidence:
+        keywords:
+          - "repeated"
+          - "multiple attempts"
+          - "spike"
+          - "surge"
+          - "increase"
+          - "burst"
+          - "brute force"
+          - "failures"
+          - "lockout"
+      splunk_alignment:
+        - "streamstats rate-of-change"
+        - "slope/acceleration indicators"
+        - "failures-then-success patterns"
+
+  guardrails:
+    - id: ioc_only_cap
+      description: "If IOC/signature-only with no temporal features, cap at reactive_only."
+      cap_label: reactive_only
+      evidence:
+        keywords:
+          - "hash"
+          - "ioc"
+          - "ip address"
+          - "domain"
+          - "known bad"
