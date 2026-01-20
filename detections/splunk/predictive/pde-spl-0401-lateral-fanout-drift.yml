@@ -1,0 +1,162 @@
+id: pde-spl-0401
+name: Emerging Lateral Movement Preparation via Internal Fan-out Drift
+detection_type: predictive
+predictive_readiness: predictive_ready
+severity: high
+
+version: 0.1.0
+status: experimental
+
+description: >
+  Predictive detection for emerging lateral movement preparation by identifying sustained growth
+  in internal network fan-out that deviates from a host’s historical baseline.
+
+log_source:
+  platform: splunk
+  product: network
+  category: traffic
+
+data_sources:
+  - network_traffic
+
+tags:
+  - predictive
+  - p2
+  - lateral_movement
+  - fanout
+  - baseline
+  - trend
+
+references:
+  - https://attack.mitre.org/tactics/TA0008/
+  - https://attack.mitre.org/techniques/T1021/
+
+mappings:
+  mitre_attack:
+    tactics:
+      - TA0008
+    techniques:
+      - T1021
+
+  cyber_kill_chain:
+    phases:
+      - reconnaissance
+      - exploitation
+
+  nist:
+    csf:
+      functions:
+        - Detect
+      categories:
+        - DE.CM
+        - DE.AE
+      subcategories:
+        - DE.CM-1
+        - DE.AE-1
+    nist_800_53:
+       families:
+        - AU
+        - SI
+       controls:
+        - AU-6
+        - SI-4
+
+
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+
+features:
+  - name: internal_dest_count
+    description: Unique internal destination hosts contacted per host per bucket.
+    entity: host
+  - name: internal_conn_count
+    description: Total internal connections per host per bucket.
+    entity: host
+  - name: fanout_growth_rate
+    description: Sustained positive growth of internal destination count across buckets.
+    entity: host
+  - name: new_internal_targets
+    description: New internal destinations not previously seen for the host in baseline window.
+    entity: host
+  - name: baseline_deviation_ratio
+    description: Ratio of current fan-out to 30-day baseline average for the host.
+    entity: host
+
+prediction:
+  target: emerging_lateral_movement_preparation
+  method: baseline_deviation_and_trend
+  horizon: early
+
+alert_condition: >
+  baseline_deviation_ratio >= 2.5 AND sustained_positive_trend(internal_dest_count, 3) AND new_internal_targets >= 3
+
+query:
+  language: spl
+  text: |
+    /* PDE-SPL-0401: Emerging Lateral Movement Preparation via Fan-out Drift */
+    /* Baseline: 30d, Observation: 72h, Bucket: 1h */
+    /* Tunables: deviation_ratio=2.5, sustained_buckets=3, min_new_targets=3 */
+
+    | noop
+    | append [
+        search earliest=-30d@d
+        | eval is_internal=if(
+            cidrmatch("10.0.0.0/8", dest_ip) OR cidrmatch("172.16.0.0/12", dest_ip) OR cidrmatch("192.168.0.0/16", dest_ip),
+            1, 0
+          )
+        | where is_internal=1
+        | bucket _time span=1h
+        | stats dc(dest_ip) as internal_dest_count_baseline by host _time
+        | stats avg(internal_dest_count_baseline) as baseline_avg stdev(internal_dest_count_baseline) as baseline_std by host
+      ]
+    | append [
+        search earliest=-72h@h
+        | eval is_internal=if(
+            cidrmatch("10.0.0.0/8", dest_ip) OR cidrmatch("172.16.0.0/12", dest_ip) OR cidrmatch("192.168.0.0/16", dest_ip),
+            1, 0
+          )
+        | where is_internal=1
+        | bucket _time span=1h
+        | stats dc(dest_ip) as internal_dest_count count as internal_conn_count values(dest_ip) as dests by host _time
+        | sort 0 host _time
+        | streamstats current=f window=2 last(internal_dest_count) as prev_count by host
+        | eval growth_flag=if(internal_dest_count>prev_count,1,0)
+        | streamstats window=3 sum(growth_flag) as growth_hits by host
+      ]
+    | stats latest(internal_dest_count) as internal_dest_count
+            latest(internal_conn_count) as internal_conn_count
+            latest(growth_hits) as growth_hits
+            latest(baseline_avg) as baseline_avg
+            latest(baseline_std) as baseline_std
+            by host
+    | eval baseline_deviation_ratio=if(baseline_avg>0, internal_dest_count / baseline_avg, null())
+    | eval sustained_growth=if(growth_hits>=3, 1, 0)
+
+    /* MVP novelty proxy: replace with true set-diff in tuning section */
+    | eval new_internal_targets=internal_dest_count
+
+    | where baseline_deviation_ratio>=2.5 AND sustained_growth=1 AND new_internal_targets>=3
+    | eval signal_name="Emerging Lateral Movement Preparation"
+    | table host signal_name internal_dest_count internal_conn_count baseline_avg baseline_deviation_ratio growth_hits new_internal_targets
+
+false_positives:
+  - Network discovery tooling during vulnerability scans.
+  - New system deployments or patch windows that increase east-west traffic.
+  - Backup, monitoring, or management systems contacting many internal hosts.
+
+triage:
+  steps:
+    - Confirm host role and recent change activity (patching, deployment, scanning).
+    - Review top internal destinations and whether they are new for this host.
+    - Check for authentication anomalies from the same host within the observation window.
+    - Identify processes or users associated with the connections if telemetry exists.
+
+tuning:
+  knobs:
+    - Increase deviation ratio to 3.0 in noisy environments.
+    - Increase sustained buckets to 4 or 5 to reduce bursty behavior.
+    - Replace novelty proxy with true set-diff using a 30-day destination set lookup or summary index.
+    - Exclude known scanners and management hosts via allowlist.
