@@ -18,7 +18,7 @@ class StagingSignal:
     signal_name: str
     detection_id: str
     entity_type: str
-    entity_id: str
+    entity_id: str  # host
 
     risk_score: int
     confidence: float
