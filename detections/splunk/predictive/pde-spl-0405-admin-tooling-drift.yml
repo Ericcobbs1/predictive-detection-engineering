@@ -1,0 +1,183 @@
+id: pde-spl-0405
+name: Suspicious Admin Tooling Drift via Remote Execution and Management Tool Baseline Deviation
+detection_type: predictive
+predictive_readiness: predictive_ready
+severity: high
+
+version: 0.1.0
+status: experimental
+
+description: >
+  Predictive detection for suspicious administrative tooling usage by identifying sustained drift in
+  remote execution and management tool activity on a host relative to historical baselines.
+  Designed to surface early hands-on-keyboard behavior using legitimate tools in abnormal patterns.
+
+log_source:
+  platform: splunk
+  product: endpoint
+  category: process_and_remote_admin
+
+data_sources:
+  - endpoint_process_creation
+  - windows_security_event_logs
+  - edr_telemetry
+
+tags:
+  - predictive
+  - p2
+  - admin_tooling
+  - remote_execution
+  - lateral_movement
+  - baseline
+  - drift
+  - trend
+
+references:
+  - https://attack.mitre.org/techniques/T1021/
+  - https://attack.mitre.org/techniques/T1569/
+
+mappings:
+  mitre_attack:
+    tactics:
+      - TA0008
+    techniques:
+      - T1021
+      - T1569
+
+  cyber_kill_chain:
+    phases:
+      - exploitation
+      - installation
+
+  nist:
+    csf:
+      functions:
+        - Detect
+      categories:
+        - DE.CM
+        - DE.AE
+      subcategories:
+        - DE.CM-7
+        - DE.AE-2
+    nist_800_53:
+      families:
+        - AU
+        - SI
+      controls:
+        - AU-6
+        - SI-4
+
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+features:
+  - name: admin_tool_events_per_host
+    description: Count of admin tooling events (remote exec / management tools) per host per bucket.
+    entity: host
+  - name: unique_admin_tools
+    description: Distinct admin tool names observed per host per bucket.
+    entity: host
+  - name: admin_tool_drift_ratio
+    description: Ratio of current admin tool event count to baseline average for the host.
+    entity: host
+  - name: sustained_admin_tool_growth
+    description: Sustained positive growth in admin tooling events across N buckets for a host.
+    entity: host
+
+prediction:
+  target: suspicious_admin_tooling_drift
+  method: baseline_deviation_and_trend
+  horizon: early
+
+alert_condition: >
+  admin_tool_drift_ratio >= 2.5 AND sustained_positive_trend(admin_tool_events_per_host, 3) AND unique_admin_tools >= 2
+
+query:
+  language: spl
+  text: |
+    /* PDE-SPL-0405: Suspicious Admin Tooling Drift */
+    /* Baseline: 30d, Observation: 72h, Bucket: 1h */
+    /* Tunables: drift_ratio=2.5, sustained_buckets=3, min_unique_tools=2 */
+
+    /* Example tooling indicators (adjust to your environment):
+       - wmiexec / wmic / powershell remoting / winrm
+       - psexec / paexec
+       - schtasks used remotely
+       - sc.exe service create/start used for remote execution
+       - remote management binaries or EDR-provided remote exec telemetry
+    */
+
+    | noop
+    | append [
+        search earliest=-30d@d
+        | eval tool=case(
+            match(lower(process_name), "psexec|paexec"), "psexec",
+            match(lower(process_name), "wmic|wmiprvse"), "wmi",
+            match(lower(process_name), "winrs|winrm"), "winrm",
+            match(lower(process_name), "schtasks"), "schtasks",
+            match(lower(process_name), "sc\\.exe"), "sc",
+            match(lower(process_name), "powershell\\.exe"), "powershell",
+            true(), null()
+          )
+        | where isnotnull(tool)
+        | bucket _time span=1h
+        | stats count as admin_tool_events dc(tool) as baseline_unique_tools by host _time
+        | stats avg(admin_tool_events) as baseline_evt_avg
+                stdev(admin_tool_events) as baseline_evt_std
+                avg(baseline_unique_tools) as baseline_tools_avg
+                by host
+      ]
+    | append [
+        search earliest=-72h@h
+        | eval tool=case(
+            match(lower(process_name), "psexec|paexec"), "psexec",
+            match(lower(process_name), "wmic|wmiprvse"), "wmi",
+            match(lower(process_name), "winrs|winrm"), "winrm",
+            match(lower(process_name), "schtasks"), "schtasks",
+            match(lower(process_name), "sc\\.exe"), "sc",
+            match(lower(process_name), "powershell\\.exe"), "powershell",
+            true(), null()
+          )
+        | where isnotnull(tool)
+        | bucket _time span=1h
+        | stats count as admin_tool_events dc(tool) as unique_admin_tools by host _time
+        | sort 0 host _time
+        | streamstats current=f window=2 last(admin_tool_events) as prev_events by host
+        | eval growth_flag=if(admin_tool_events>prev_events,1,0)
+        | streamstats window=3 sum(growth_flag) as growth_hits by host
+      ]
+    | stats latest(admin_tool_events) as admin_tool_events_per_host
+            latest(unique_admin_tools) as unique_admin_tools
+            latest(growth_hits) as growth_hits
+            latest(baseline_evt_avg) as baseline_evt_avg
+            latest(baseline_evt_std) as baseline_evt_std
+            latest(baseline_tools_avg) as baseline_tools_avg
+            by host
+    | eval admin_tool_drift_ratio=if(baseline_evt_avg>0, admin_tool_events_per_host / baseline_evt_avg, null())
+    | eval sustained_growth=if(growth_hits>=3, 1, 0)
+    | where admin_tool_drift_ratio>=2.5 AND sustained_growth=1 AND unique_admin_tools>=2
+    | eval signal_name="Suspicious Admin Tooling Drift"
+    | table host signal_name admin_tool_events_per_host unique_admin_tools baseline_evt_avg admin_tool_drift_ratio growth_hits baseline_tools_avg
+
+false_positives:
+  - Legitimate IT maintenance windows using remote admin tools at higher volume.
+  - Patch management or orchestration tools invoking remote execution methods.
+  - Incident response activity using admin tooling during containment/eradication.
+
+triage:
+  steps:
+    - Confirm whether activity aligns with approved IT maintenance or IR operations.
+    - Review the specific tools executed and the parent process/command line where available.
+    - Identify the initiating user/context and whether privilege elevation occurred recently.
+    - Correlate with lateral movement signals (new internal destinations, remote logons, service creation).
+    - If the host is a workstation, treat as higher risk than known admin/jump hosts.
+
+tuning:
+  knobs:
+    - Increase drift_ratio to 3.0+ on jump hosts or admin servers with expected tooling volume.
+    - Exclude known management hosts and service accounts via allowlist.
+    - Require specific tools (psexec/winrm/wmic) to reduce noise from generic PowerShell usage.
+    - Split detections by host role (jump hosts vs workstations) with different thresholds.
+    - Add time-based suppression during approved maintenance windows.
