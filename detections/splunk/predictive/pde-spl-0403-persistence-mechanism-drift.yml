@@ -1,0 +1,166 @@
+id: pde-spl-0403
+name: New Persistence Mechanism Drift via Scheduled Task and Service Creation Baseline Deviation
+detection_type: predictive
+predictive_readiness: predictive_ready
+severity: high
+
+version: 0.1.0
+status: experimental
+
+description: >
+  Predictive detection for emerging persistence activity by identifying sustained drift in scheduled task
+  creation and/or service creation events on a host relative to historical baselines. Designed to surface
+  early persistence establishment behaviors before they trigger traditional reactive thresholds.
+
+log_source:
+  platform: splunk
+  product: windows
+  category: persistence
+
+data_sources:
+  - windows_security_event_logs
+  - windows_system_event_logs
+
+tags:
+  - predictive
+  - p2
+  - persistence
+  - scheduled_task
+  - service_creation
+  - baseline
+  - drift
+  - trend
+
+references:
+  - https://attack.mitre.org/techniques/T1053/
+  - https://attack.mitre.org/techniques/T1543/
+
+mappings:
+  mitre_attack:
+    tactics:
+      - TA0003
+    techniques:
+      - T1053
+      - T1543
+
+  cyber_kill_chain:
+    phases:
+      - exploitation
+      - installation
+
+  nist:
+    csf:
+      functions:
+        - Detect
+      categories:
+        - DE.CM
+        - DE.AE
+      subcategories:
+        - DE.CM-7
+        - DE.AE-2
+    nist_800_53:
+      families:
+        - AU
+        - SI
+      controls:
+        - AU-6
+        - SI-4
+
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+features:
+  - name: persistence_events_per_host
+    description: Count of persistence-related events (task/service creation) per host per bucket.
+    entity: host
+  - name: unique_persistence_artifacts
+    description: Distinct scheduled task names and service names created per host per bucket.
+    entity: host
+  - name: persistence_drift_ratio
+    description: Ratio of current persistence event count to baseline average for the host.
+    entity: host
+  - name: sustained_persistence_growth
+    description: Sustained positive growth in persistence event count across N buckets for a host.
+    entity: host
+
+prediction:
+  target: persistence_mechanism_drift
+  method: baseline_deviation_and_trend
+  horizon: early
+
+alert_condition: >
+  persistence_drift_ratio >= 2.5 AND sustained_positive_trend(persistence_events_per_host, 3) AND unique_persistence_artifacts >= 2
+
+query:
+  language: spl
+  text: |
+    /* PDE-SPL-0403: Persistence Mechanism Drift (Tasks/Services) */
+    /* Baseline: 30d, Observation: 72h, Bucket: 1h */
+    /* Tunables: drift_ratio=2.5, sustained_buckets=3, min_unique_artifacts=2 */
+
+    /* NOTE: You must map your environment’s fields for scheduled task and service creation. */
+    /* Common Windows sources:
+       - Scheduled Task creation: Security EventCode=4698 (and related task events)
+       - Service creation: System EventCode=7045
+    */
+
+    | noop
+    | append [
+        search earliest=-30d@d (EventCode=4698 OR EventCode=7045)
+        | bucket _time span=1h
+        | eval artifact=case(EventCode=4698, coalesce(TaskName, task_name, "unknown_task"),
+                             EventCode=7045, coalesce(ServiceName, service_name, "unknown_service"),
+                             true(), "unknown_artifact")
+        | stats count as persistence_events dc(artifact) as baseline_unique_artifacts by host _time
+        | stats avg(persistence_events) as baseline_evt_avg
+                stdev(persistence_events) as baseline_evt_std
+                avg(baseline_unique_artifacts) as baseline_artifacts_avg
+                by host
+      ]
+    | append [
+        search earliest=-72h@h (EventCode=4698 OR EventCode=7045)
+        | bucket _time span=1h
+        | eval artifact=case(EventCode=4698, coalesce(TaskName, task_name, "unknown_task"),
+                             EventCode=7045, coalesce(ServiceName, service_name, "unknown_service"),
+                             true(), "unknown_artifact")
+        | stats count as persistence_events dc(artifact) as unique_persistence_artifacts by host _time
+        | sort 0 host _time
+        | streamstats current=f window=2 last(persistence_events) as prev_events by host
+        | eval growth_flag=if(persistence_events>prev_events,1,0)
+        | streamstats window=3 sum(growth_flag) as growth_hits by host
+      ]
+    | stats latest(persistence_events) as persistence_events_per_host
+            latest(unique_persistence_artifacts) as unique_persistence_artifacts
+            latest(growth_hits) as growth_hits
+            latest(baseline_evt_avg) as baseline_evt_avg
+            latest(baseline_evt_std) as baseline_evt_std
+            latest(baseline_artifacts_avg) as baseline_artifacts_avg
+            by host
+    | eval persistence_drift_ratio=if(baseline_evt_avg>0, persistence_events_per_host / baseline_evt_avg, null())
+    | eval sustained_growth=if(growth_hits>=3, 1, 0)
+    | where persistence_drift_ratio>=2.5 AND sustained_growth=1 AND unique_persistence_artifacts>=2
+    | eval signal_name="Persistence Mechanism Drift (Tasks/Services)"
+    | table host signal_name persistence_events_per_host unique_persistence_artifacts baseline_evt_avg persistence_drift_ratio growth_hits baseline_artifacts_avg
+
+false_positives:
+  - Legitimate software deployment or patching that creates services or scheduled tasks.
+  - Endpoint management tooling (SCCM, Intune, EDR updates) creating tasks/services during maintenance.
+  - New baseline periods (new build images, golden image rollout) creating artifacts at scale.
+
+triage:
+  steps:
+    - Confirm whether the host is undergoing patching, deployment, or endpoint management changes.
+    - Review the created task/service names and compare against approved software and IT tooling.
+    - Validate the creating user/process if telemetry is available (EDR, Sysmon, PowerShell logs).
+    - Check whether the artifacts persist across reboots and whether they execute suspicious binaries.
+    - Correlate with recent privilege escalation or suspicious admin activity on the host.
+
+tuning:
+  knobs:
+    - Increase drift_ratio to 3.0+ for server fleets with frequent maintenance.
+    - Raise min_unique_artifacts to 3–5 to reduce noise during patch windows.
+    - Exclude known deployment/service accounts and management hosts.
+    - Split detections by server class (domain controllers, app servers, workstations).
+    - Add allowlists for known scheduled tasks and known service names.
