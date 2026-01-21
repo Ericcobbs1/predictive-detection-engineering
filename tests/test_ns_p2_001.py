@@ -82,3 +82,4 @@ def test_ns_p2_001_generates_signal():
     assert 0.0 <= s.confidence <= 1.0
     assert s.time_horizon in {"early", "emerging", "imminent"}
 
+
