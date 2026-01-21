@@ -6,35 +6,26 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 @dataclass(frozen=True)
 class FanoutBucketFeatures:
-    """
-    Feature record for a single entity (host) in a single time bucket.
-    """
     host: str
     bucket_start: int  # epoch seconds aligned to bucket boundary
     internal_dest_count: int
     internal_conn_count: int
 
-    # Computed later in pipeline stages (not required for raw extraction)
+    # Computed later in pipeline stages
     fanout_growth_rate: Optional[float] = None
     new_internal_targets: Optional[int] = None
     baseline_deviation_ratio: Optional[float] = None
 
 
-RFC1918_PREFIXES: Tuple[str, ...] = (
-    "10.",
-    "192.168.",
-    # 172.16.0.0/12 handled separately
-)
+RFC1918_PREFIXES: Tuple[str, ...] = ("10.", "192.168.")
 
 
 def is_internal_ip(ip: str) -> bool:
     if not ip:
         return False
-
     ip = ip.strip()
     if ip.startswith(RFC1918_PREFIXES):
         return True
-
     if ip.startswith("172."):
         parts = ip.split(".")
         if len(parts) < 2:
@@ -44,7 +35,6 @@ def is_internal_ip(ip: str) -> bool:
         except ValueError:
             return False
         return 16 <= second <= 31
-
     return False
 
 
@@ -63,8 +53,8 @@ def extract_fanout_bucket_features(
 ) -> List[FanoutBucketFeatures]:
     """
     Computes per-host per-bucket:
-      - internal_dest_count (dc internal dest_ip)
-      - internal_conn_count (count internal events)
+      - internal_dest_count
+      - internal_conn_count
     """
     dest_sets: Dict[Tuple[str, int], Set[str]] = {}
     conn_counts: Dict[Tuple[str, int], int] = {}
@@ -110,6 +100,46 @@ def extract_fanout_bucket_features(
     return out
 
 
+def extract_internal_dest_sets_by_bucket(
+    events: Iterable[Dict],
+    bucket_seconds: int = 3600,
+    host_field: str = "host",
+    dest_ip_field: str = "dest_ip",
+    time_field: str = "_time",
+) -> Dict[Tuple[str, int], Set[str]]:
+    """
+    Phase 2.2 helper: returns (host, bucket_start) -> set(dest_ip) for internal traffic.
+    Used to compute true novelty via set-diff.
+    """
+    dest_sets: Dict[Tuple[str, int], Set[str]] = {}
+
+    for e in events:
+        host = str(e.get(host_field, "")).strip()
+        dest_ip = str(e.get(dest_ip_field, "")).strip()
+        ts_raw = e.get(time_field)
+
+        if not host or not dest_ip or ts_raw is None:
+            continue
+
+        try:
+            ts = int(ts_raw)
+        except Exception:
+            continue
+
+        if not is_internal_ip(dest_ip):
+            continue
+
+        b = bucket_epoch(ts, bucket_seconds)
+        key = (host, b)
+
+        if key not in dest_sets:
+            dest_sets[key] = set()
+
+        dest_sets[key].add(dest_ip)
+
+    return dest_sets
+
+
 def compute_growth_hits(
     per_bucket: List[FanoutBucketFeatures],
     sustained_buckets: int = 3,
@@ -122,6 +152,7 @@ def compute_growth_hits(
         by_host.setdefault(r.host, []).append(r)
 
     growth_hits: Dict[Tuple[str, int], int] = {}
+
     for host, rows in by_host.items():
         rows.sort(key=lambda r: r.bucket_start)
         flags: List[int] = []
@@ -143,17 +174,14 @@ def compute_new_internal_targets_proxy(internal_dest_count: int) -> int:
 
 
 if __name__ == "__main__":
+    base = 1700000000
     sample_events = [
-        {"_time": 1700000000, "host": "host1", "dest_ip": "10.0.0.5"},
-        {"_time": 1700000100, "host": "host1", "dest_ip": "10.0.0.6"},
-        {"_time": 1700000200, "host": "host1", "dest_ip": "8.8.8.8"},
-        {"_time": 1700003600, "host": "host1", "dest_ip": "10.0.0.7"},
-        {"_time": 1700007200, "host": "host1", "dest_ip": "10.0.0.8"},
+        {"_time": base + 10, "host": "h1", "dest_ip": "10.0.0.5"},
+        {"_time": base + 20, "host": "h1", "dest_ip": "10.0.0.6"},
+        {"_time": base + 3600 + 10, "host": "h1", "dest_ip": "10.0.0.7"},
+        {"_time": base + 7200 + 10, "host": "h1", "dest_ip": "10.0.0.8"},
     ]
-
     feats = extract_fanout_bucket_features(sample_events, bucket_seconds=3600)
-    hits = compute_growth_hits(feats, sustained_buckets=3)
-
-    for f in feats:
-        print(f)
-        print("growth_hits:", hits[(f.host, f.bucket_start)])
+    dests = extract_internal_dest_sets_by_bucket(sample_events, bucket_seconds=3600)
+    print("features:", feats)
+    print("dest_sets:", {k: sorted(list(v)) for k, v in dests.items()})
