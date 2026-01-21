@@ -1,0 +1,174 @@
+id: pde-spl-0404
+name: Data Staging Behavior Drift via Compression and Large File Activity Baseline Deviation
+detection_type: predictive
+predictive_readiness: predictive_ready
+severity: high
+
+version: 0.1.0
+status: experimental
+
+description: >
+  Predictive detection for data staging activity by identifying sustained drift in compression/archive
+  executions and/or large file write activity on a host relative to historical baselines. Designed to surface
+  early data staging behaviors that often precede exfiltration.
+
+log_source:
+  platform: splunk
+  product: endpoint
+  category: file_and_process
+
+data_sources:
+  - endpoint_process_creation
+  - endpoint_file_activity
+
+tags:
+  - predictive
+  - p2
+  - data_staging
+  - exfiltration
+  - compression
+  - archive
+  - baseline
+  - drift
+  - trend
+
+references:
+  - https://attack.mitre.org/techniques/T1074/
+  - https://attack.mitre.org/techniques/T1560/
+
+mappings:
+  mitre_attack:
+    tactics:
+      - TA0009
+    techniques:
+      - T1074
+      - T1560
+
+  cyber_kill_chain:
+    phases:
+      - exploitation
+      - installation
+
+  nist:
+    csf:
+      functions:
+        - Detect
+      categories:
+        - DE.CM
+        - DE.AE
+      subcategories:
+        - DE.CM-7
+        - DE.AE-2
+    nist_800_53:
+      families:
+        - AU
+        - SI
+      controls:
+        - AU-6
+        - SI-4
+
+  pci_dss:
+    requirements:
+      - "10.2"
+      - "10.6"
+
+features:
+  - name: staging_events_per_host
+    description: Count of staging-related events (compression/archive exec or large file writes) per host per bucket.
+    entity: host
+  - name: unique_staging_artifacts
+    description: Distinct archive file paths or tool names observed per host per bucket.
+    entity: host
+  - name: staging_drift_ratio
+    description: Ratio of current staging event count to baseline average for the host.
+    entity: host
+  - name: sustained_staging_growth
+    description: Sustained positive growth in staging event count across N buckets for a host.
+    entity: host
+
+prediction:
+  target: data_staging_drift
+  method: baseline_deviation_and_trend
+  horizon: early
+
+alert_condition: >
+  staging_drift_ratio >= 2.5 AND sustained_positive_trend(staging_events_per_host, 3) AND unique_staging_artifacts >= 2
+
+query:
+  language: spl
+  text: |
+    /* PDE-SPL-0404: Data Staging Drift (Compression + Large File Activity) */
+    /* Baseline: 30d, Observation: 72h, Bucket: 1h */
+    /* Tunables: drift_ratio=2.5, sustained_buckets=3, min_unique_artifacts=2, large_file_bytes=100000000 */
+
+    /* Process-based staging indicators (example tools): 7z, rar, winzip, tar, gzip */
+    /* File-based staging indicators: large file writes, archive extensions (.zip, .7z, .rar, .tar, .gz) */
+
+    | noop
+    | append [
+        search earliest=-30d@d
+        | eval is_staging=case(
+            match(lower(process_name), "7z|7za|rar|winzip|zip|tar|gzip"), 1,
+            match(lower(file_name), "\\.zip$|\\.7z$|\\.rar$|\\.tar$|\\.gz$"), 1,
+            file_size>=100000000, 1,
+            true(), 0
+          )
+        | where is_staging=1
+        | bucket _time span=1h
+        | eval artifact=coalesce(file_path, file_name, process_name, "unknown_artifact")
+        | stats count as staging_events dc(artifact) as baseline_unique_artifacts by host _time
+        | stats avg(staging_events) as baseline_evt_avg
+                stdev(staging_events) as baseline_evt_std
+                avg(baseline_unique_artifacts) as baseline_artifacts_avg
+                by host
+      ]
+    | append [
+        search earliest=-72h@h
+        | eval is_staging=case(
+            match(lower(process_name), "7z|7za|rar|winzip|zip|tar|gzip"), 1,
+            match(lower(file_name), "\\.zip$|\\.7z$|\\.rar$|\\.tar$|\\.gz$"), 1,
+            file_size>=100000000, 1,
+            true(), 0
+          )
+        | where is_staging=1
+        | bucket _time span=1h
+        | eval artifact=coalesce(file_path, file_name, process_name, "unknown_artifact")
+        | stats count as staging_events dc(artifact) as unique_staging_artifacts by host _time
+        | sort 0 host _time
+        | streamstats current=f window=2 last(staging_events) as prev_events by host
+        | eval growth_flag=if(staging_events>prev_events,1,0)
+        | streamstats window=3 sum(growth_flag) as growth_hits by host
+      ]
+    | stats latest(staging_events) as staging_events_per_host
+            latest(unique_staging_artifacts) as unique_staging_artifacts
+            latest(growth_hits) as growth_hits
+            latest(baseline_evt_avg) as baseline_evt_avg
+            latest(baseline_evt_std) as baseline_evt_std
+            latest(baseline_artifacts_avg) as baseline_artifacts_avg
+            by host
+    | eval staging_drift_ratio=if(baseline_evt_avg>0, staging_events_per_host / baseline_evt_avg, null())
+    | eval sustained_growth=if(growth_hits>=3, 1, 0)
+    | where staging_drift_ratio>=2.5 AND sustained_growth=1 AND unique_staging_artifacts>=2
+    | eval signal_name="Data Staging Drift (Compression/Large File Activity)"
+    | table host signal_name staging_events_per_host unique_staging_artifacts baseline_evt_avg staging_drift_ratio growth_hits baseline_artifacts_avg
+
+false_positives:
+  - Legitimate backup, archival, or log rotation jobs creating archives or large files.
+  - Software packaging/build processes producing compressed artifacts.
+  - IT operations running compression during maintenance or data migration.
+
+triage:
+  steps:
+    - Identify the process and user responsible for archive creation or large file writes (EDR/Sysmon if available).
+    - Review file paths and extensions to determine whether the staging location is unusual (temp dirs, user profiles).
+    - Check whether staging coincides with outbound transfer activity (proxy, firewall, DNS, cloud storage).
+    - Determine whether the host role supports expected archival activity (server backups vs user workstation).
+    - Correlate with new persistence or credential activity on the same host.
+
+tuning:
+  knobs:
+    - Increase large_file_bytes threshold (100MB to 250MB/500MB) for noisy environments.
+    - Restrict to specific directories often used in staging (temp, user profile, programdata).
+    - Exclude known backup tools and scheduled jobs by allowlist.
+    - Split by server class, and apply stricter thresholds on workstations.
+    - Add tool allowlists (approved archivers) or require both process and file indicators.
